@@ -1,0 +1,40 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <model name="sar_target_raft">
+    <static>false</static>
+    <link name="raft_body">
+      <pose>0 0 0.15 0 0 0</pose>
+      
+      <!-- Raft's a bright orange box -->
+      <visual name="visual">
+        <geometry>
+          <box>
+            <size>2.0 1.5 0.3</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>1 0.3 0 1</ambient>
+          <diffuse>1 0.3 0 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+      
+      <collision name="collision">
+        <geometry>
+          <box>
+            <size>2.0 1.5 0.3</size>
+          </box>
+        </geometry>
+      </collision>
+      
+      <inertial>
+        <mass>50</mass>
+        <inertia>
+          <ixx>5.0</ixx>
+          <iyy>7.0</iyy>
+          <izz>10.0</izz>
+        </inertia>
+      </inertial>
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,41 @@
+# Maritime Environment Configuration - Calm Conditions
+# Use this preset for ideal search and rescue conditions
+
+environment:
+  name: "calm_sea"
+  description: "Calm maritime conditions with minimal waves and clear visibility"
+
+lighting:
+  time_of_day: "day"
+  sun_intensity: 0.8
+  ambient_light: [0.4, 0.4, 0.4]
+  sky_color: [0.5, 0.7, 0.9]
+
+ocean:
+  wave_height: 0.3 #m
+  wave_period: 5.0 #s
+  wave_direction: [1, 0] #normalized 
+  wave_count: 3
+  wave_gain: 0.2
+
+wind:
+  enabled: true
+  speed_mean: 2.0 #m/s
+  speed_variance: 0.5
+  direction: 0 #degrees
+  gust_enabled: false
+
+visibility:
+  fog_enabled: false
+  render_distance: 1000 #meters
+
+search_area:
+  center: [0, 0] #m from origin
+  size: [500, 500] #[length, breadth]
+  boundary_markers: true
+
+targets:
+  spawn_enabled: true
+  count: 3
+  types: ["life_raft", "debris", "person"]
+  random_placement: true

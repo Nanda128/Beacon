@@ -1,0 +1,45 @@
+# Maritime Environment Configuration - Rough Conditions
+# Challenging conditions with high waves and strong wind
+
+environment:
+  name: "rough_sea"
+  description: "Rough maritime conditions with high waves and poor visibility"
+
+lighting:
+  time_of_day: "dusk"
+  sun_intensity: 0.5
+  ambient_light: [0.3, 0.3, 0.35]
+  sky_color: [0.4, 0.5, 0.6]
+
+ocean:
+  wave_height: 2.5 #m (rough: 2.5-4m)
+  wave_period: 3.5 #s
+  wave_direction: [1, 0.3]
+  wave_count: 7
+  wave_gain: 0.8
+
+wind:
+  enabled: true
+  speed_mean: 15.0 #m/s 
+  speed_variance: 4.0
+  direction: 90 #degrees
+  gust_enabled: true
+  gust_duration: 5.0
+  gust_force_mean: 20.0
+
+visibility:
+  fog_enabled: true
+  fog_density: 0.008
+  fog_color: [0.6, 0.6, 0.65]
+  render_distance: 200
+
+search_area:
+  center: [0, 0]
+  size: [1000, 1000]
+  boundary_markers: true
+
+targets:
+  spawn_enabled: true
+  count: 4
+  types: ["life_raft", "debris"]
+  random_placement: true

@@ -1,0 +1,45 @@
+# Maritime Environment Configuration - Moderate Conditions
+# Moderate wave conditions with variable wind
+
+environment:
+  name: "moderate_sea"
+  description: "Moderate maritime conditions with active waves and wind"
+
+lighting:
+  time_of_day: "day"
+  sun_intensity: 0.7
+  ambient_light: [0.35, 0.35, 0.35]
+  sky_color: [0.45, 0.6, 0.8]
+
+ocean:
+  wave_height: 1.0 #m (moderate: 0.5-2.5m)
+  wave_period: 4.0 #s
+  wave_direction: [0.8, 0.6]
+  wave_count: 5
+  wave_gain: 0.5
+
+wind:
+  enabled: true
+  speed_mean: 8.0 #m/s (fresh breeze)
+  speed_variance: 2.0
+  direction: 45 #degrees
+  gust_enabled: true
+  gust_duration: 3.0
+  gust_force_mean: 12.0
+
+visibility:
+  fog_enabled: true
+  fog_density: 0.002
+  fog_color: [0.7, 0.7, 0.7]
+  render_distance: 500
+
+search_area:
+  center: [0, 0]
+  size: [800, 800]
+  boundary_markers: true
+
+targets:
+  spawn_enabled: true
+  count: 5
+  types: ["life_raft", "debris", "person", "vessel"]
+  random_placement: true

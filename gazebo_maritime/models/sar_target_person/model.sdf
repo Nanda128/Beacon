@@ -1,0 +1,45 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <model name="sar_target_person">
+    <static>false</static>
+    <link name="body">
+      <pose>0 0 0.1 0 0 0</pose>
+      
+      <!-- A person's represented as an orange cylinder -->
+      <visual name="visual">
+        <geometry>
+          <cylinder>
+            <radius>0.3</radius>
+            <length>0.2</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>1 0.5 0 1</ambient>
+          <diffuse>1 0.5 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+      
+      <collision name="collision">
+        <geometry>
+          <cylinder>
+            <radius>0.3</radius>
+            <length>0.2</length>
+          </cylinder>
+        </geometry>
+      </collision>
+      
+      <inertial>
+        <mass>70</mass>
+        <inertia>
+          <ixx>0.5</ixx>
+          <iyy>0.5</iyy>
+          <izz>0.5</izz>
+        </inertia>
+      </inertial>
+    </link>
+    
+    <!-- Note: Buoyancy plugin from Gazebo Classic not yet available in Gazebo Sim 8 -->
+    <!-- Targets should be spawned at z=0.1 to float on ocean surface -->
+  </model>
+</sdf>
