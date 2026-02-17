@@ -1,2 +1,8 @@
 venv
 .vscode/
+package-lock.json
+node_modules
+dist/
+*.log
+*.env
+.idea/
