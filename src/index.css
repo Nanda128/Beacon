@@ -1,0 +1,21 @@
+
+root {
+  color: #0b1223;
+  background-color: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f8fafc;
+  color: #0b1223;
+}
+
+#root,
+.app-shell {
+  min-height: 100vh;
+}
