@@ -1,7 +1,7 @@
 import calmBay from "./presets/calm-bay.json";
 import roughSea from "./presets/rough-sea.json";
-import type {MaritimeScenario} from "../types/environment";
-import {parseScenarioString, scenarioToJSON, validateScenario} from "../lib/environmentGenerator";
+import type {MaritimeScenario} from "../../domain/types/environment";
+import {parseScenarioString, scenarioToJSON, validateScenario} from "../../domain/environment/generator";
 
 export const scenarioPresets: { id: string; label: string; scenario: MaritimeScenario }[] = [
     {id: "calm-bay", label: "Calm Bay", scenario: validateScenario(calmBay)},
@@ -26,3 +26,4 @@ export function downloadScenarioJSON(scenario: MaritimeScenario, filename?: stri
     a.click();
     URL.revokeObjectURL(url);
 }
+

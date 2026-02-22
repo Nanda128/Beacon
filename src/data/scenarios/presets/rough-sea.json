@@ -39,6 +39,27 @@
       "textureStrength": 0.78
     }
   },
+  "anomalies": {
+    "config": {
+      "person-in-water": {
+        "count": 4,
+        "detectionRadiusMeters": 260
+      },
+      "lifeboat": {
+        "count": 1,
+        "detectionRadiusMeters": 450
+      },
+      "debris-field": {
+        "count": 3,
+        "detectionRadiusMeters": 340
+      },
+      "false-positive": {
+        "count": 2,
+        "detectionRadiusMeters": 220
+      }
+    },
+    "items": []
+  },
   "metadata": {
     "createdAt": "2026-02-21T00:00:00.000Z",
     "labels": [

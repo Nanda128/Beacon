@@ -299,3 +299,35 @@ body {
     color: #0b1324;
     border-color: rgba(255, 255, 255, 0.18);
 }
+
+.drone-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 4px;
+}
+
+.drone-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.08);
+    color: #e2e8f0;
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.drone-pill:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px rgba(59, 130, 246, 0.18);
+}
+
+.drone-pill.active {
+    border-color: rgba(234, 179, 8, 0.65);
+    background: rgba(234, 179, 8, 0.16);
+    box-shadow: 0 10px 22px rgba(234, 179, 8, 0.24);
+}
