@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "Rough Sea",
+  "seed": "GALE-021",
+  "sector": {
+    "id": "GALE-021-12000x10000",
+    "name": "Rough Sea",
+    "seed": "GALE-021",
+    "createdAt": "2026-02-21T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -6000,
+        "y": -5000
+      },
+      "widthMeters": 12000,
+      "heightMeters": 10000
+    },
+    "conditions": {
+      "seaState": 6,
+      "windKts": 32,
+      "visibilityKm": 8,
+      "surfaceTempC": 17,
+      "description": "Whitecaps and gusting wind"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.018,
+      "detailScale": 0.085,
+      "baseColor": [
+        16,
+        60,
+        96
+      ],
+      "highlightColor": [
+        38,
+        114,
+        176
+      ],
+      "textureStrength": 0.78
+    }
+  },
+  "metadata": {
+    "createdAt": "2026-02-21T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "training"
+    ],
+    "notes": "Challenging seas with strong winds"
+  }
+}
+
