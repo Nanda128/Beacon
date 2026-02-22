@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "name": "Calm Bay",
+  "seed": "CALM-001",
+  "sector": {
+    "id": "CALM-001-10000x10000",
+    "name": "Calm Bay",
+    "seed": "CALM-001",
+    "createdAt": "2026-02-21T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -5000,
+        "y": -5000
+      },
+      "widthMeters": 10000,
+      "heightMeters": 10000
+    },
+    "conditions": {
+      "seaState": 2,
+      "windKts": 8,
+      "visibilityKm": 18,
+      "surfaceTempC": 19,
+      "description": "Gentle breeze with slight ripples"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.012,
+      "detailScale": 0.065,
+      "baseColor": [
+        16,
+        60,
+        96
+      ],
+      "highlightColor": [
+        38,
+        114,
+        176
+      ],
+      "textureStrength": 0.6
+    }
+  },
+  "metadata": {
+    "createdAt": "2026-02-21T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "training"
+    ],
+    "notes": "Reference calm-water scenario"
+  }
+}
+
