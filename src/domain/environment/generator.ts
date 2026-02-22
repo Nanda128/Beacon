@@ -39,7 +39,10 @@ export const droneHubFromBounds = (bounds: SectorBounds) => ({
 const isInsideHubSafeZone = (point: Vec2, hub: { position: Vec2; radius: number }) =>
     hub.radius > 0 && Math.hypot(point.x - hub.position.x, point.y - hub.position.y) <= hub.radius;
 
-const createAnomalyPositionSampler = (sector: MaritimeSector, hub: { position: Vec2; radius: number }, rng: () => number) => {
+const createAnomalyPositionSampler = (sector: MaritimeSector, hub: {
+    position: Vec2;
+    radius: number
+}, rng: () => number) => {
     const {bounds} = sector;
     return () => {
         for (let attempt = 0; attempt < 32; attempt++) {

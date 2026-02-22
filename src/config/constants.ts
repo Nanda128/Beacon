@@ -17,6 +17,8 @@ export const droneModels: DroneModel[] = [
     {id: "skydio2", label: "Skydio 2+ (18 kts)", speedKts: 18, batteryLifeMinutes: 27},
     {id: "wingtraone", label: "WingtraOne (39 kts)", speedKts: 39, batteryLifeMinutes: 59},
     {id: "custom12", label: "Custom Low (12 kts)", speedKts: 12, batteryLifeMinutes: 25},
+    {id: "speeddemon", label: "Demonstration Drone (100 kts)", speedKts: 100, batteryLifeMinutes: 50},
+    {id: "lowbattery", label: "Battery Demonstration (30 kts)", speedKts: 50, batteryLifeMinutes: 5.5},
 ];
 
 export const randomSeed = () => {
@@ -26,3 +28,6 @@ export const randomSeed = () => {
 };
 
 export const defaultAnomalyConfigOverride: Partial<AnomalySettings> = {};
+
+export const batteryWarningThresholds = [20, 15, 10];
+export const batteryEmergencyBufferMinutes = 1;

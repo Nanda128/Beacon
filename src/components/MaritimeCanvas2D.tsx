@@ -2,6 +2,8 @@ import React, {useCallback, useEffect, useRef, useState} from "react";
 import type {MaritimeScenario, Vec2} from "../domain/types/environment";
 import type {AnomalyType} from "../domain/types/environment";
 import type {DroneState} from "../domain/types/drone";
+import type {VoronoiCell} from "./canvas/voronoi";
+import type {CoveragePlan} from "../domain/coverage/planner";
 import {anomalyTypeLabels} from "../config/anomalies";
 import {
     adjustedGrid,
@@ -26,6 +28,8 @@ import {
     findAnomalyAtScreen,
     findDroneAtScreen,
     drawDroneHub,
+    drawVoronoiCells,
+    drawCoveragePaths,
 } from "./canvas/layers";
 import {anomalyStyles} from "../config/anomalies";
 
@@ -41,6 +45,10 @@ type MaritimeCanvas2DProps = {
     onClearDroneSelection?: () => void;
     onMoveDrone?: (id: string, position: Vec2) => void;
     onSetWaypoint?: (point: Vec2, append?: boolean) => void;
+    showSensorRange?: boolean;
+    sensorRangeMeters?: number;
+    voronoiCells?: VoronoiCell[];
+    coveragePlans?: CoveragePlan[];
 };
 
 const MaritimeCanvas2D = ({
@@ -54,7 +62,11 @@ const MaritimeCanvas2D = ({
                               onToggleDroneSelection,
                               onClearDroneSelection,
                               onMoveDrone,
-                              onSetWaypoint
+                              onSetWaypoint,
+                              showSensorRange,
+                              sensorRangeMeters,
+                              voronoiCells,
+                              coveragePlans,
                           }: MaritimeCanvas2DProps) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -332,16 +344,33 @@ const MaritimeCanvas2D = ({
             drawGrid(ctx, size, cameraRef.current, gridSpacing);
             drawAxes(ctx, size, cameraRef.current);
             drawSectorBounds(ctx, size, cameraRef.current, scenario);
+            drawVoronoiCells(ctx, size, cameraRef.current, voronoiCells, selectedDroneIds);
+            drawCoveragePaths(ctx, size, cameraRef.current, coveragePlans, selectedDroneIds);
             drawDroneHub(ctx, size, cameraRef.current, scenario);
             drawAnomalies(ctx, size, cameraRef.current, scenario);
-            drawDrones(ctx, size, cameraRef.current, drones, selectedDroneIds);
+            drawDrones(ctx, size, cameraRef.current, drones, selectedDroneIds, {
+                showSensorRange,
+                sensorRangeMeters,
+            });
             drawSelectionBox(ctx, size, cameraRef.current, selectionBox);
             drawCrosshair(ctx, size, cameraRef.current);
             ctx.restore();
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans]);
+
+    useEffect(() => {
+        const handleGlobalPointerDown = (event: PointerEvent) => {
+            const container = containerRef.current;
+            if (!container) return;
+            const target = event.target as Node | null;
+            if (target && container.contains(target)) return;
+            onClearDroneSelection?.();
+        };
+        document.addEventListener("pointerdown", handleGlobalPointerDown);
+        return () => document.removeEventListener("pointerdown", handleGlobalPointerDown);
+    }, [onClearDroneSelection]);
 
     return (
         <>
@@ -368,6 +397,13 @@ const MaritimeCanvas2D = ({
                         onWheel={handleWheel}
                     />
                     <div className="overlay-box">
+                        {onClearDroneSelection && (
+                            <div style={{marginBottom: 6}}>
+                                <button className="btn ghost" onClick={onClearDroneSelection} style={{width: "100%"}}>
+                                    Deselect all drones
+                                </button>
+                            </div>
+                        )}
                         <div><strong>Center</strong> x: {camera.center.x.toFixed(1)} m |
                             y: {camera.center.y.toFixed(1)} m
                         </div>
@@ -388,6 +424,16 @@ const MaritimeCanvas2D = ({
                         <div>
                             <strong>Drones</strong> {drones.length} active
                         </div>
+                        {voronoiCells && voronoiCells.length > 0 && (
+                            <div>
+                                <strong>Voronoi</strong> {voronoiCells.length} cells
+                            </div>
+                        )}
+                        {coveragePlans && coveragePlans.length > 0 && (
+                            <div>
+                                <strong>Coverage</strong> avg {Math.round(coveragePlans.reduce((sum, p) => sum + p.completenessPct, 0) / coveragePlans.length)}%
+                            </div>
+                        )}
                         <div style={{display: "grid", gap: 2, marginTop: 4}}>
                             {Object.entries(anomalyStyles).map(([type, style]) => {
                                 const typed = type as AnomalyType;
@@ -410,7 +456,8 @@ const MaritimeCanvas2D = ({
                         </div>
                         <div style={{marginTop: 4, opacity: 0.7}}>Drag empty water to box-select (Shift add, Ctrl/Cmd
                             toggle)
-                            · Alt/right drag to pan · Scroll to zoom · Drag drones to reposition · Shift/Ctrl/Cmd click to
+                            · Alt/right drag to pan · Scroll to zoom · Drag drones to reposition · Shift/Ctrl/Cmd click
+                            to
                             queue waypoint · Click marker to
                             toggle
                             detected
