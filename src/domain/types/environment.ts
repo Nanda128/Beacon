@@ -39,11 +39,35 @@ export type ScenarioMetadata = {
     notes?: string;
 };
 
+export type AnomalyType = "person-in-water" | "lifeboat" | "debris-field" | "false-positive";
+
+export type AnomalyConfig = {
+    count: number;
+    detectionRadiusMeters: number;
+};
+
+export type AnomalySettings = Record<AnomalyType, AnomalyConfig>;
+
+export type AnomalyInstance = {
+    id: string;
+    type: AnomalyType;
+    position: Vec2;
+    detected: boolean;
+    detectionRadiusMeters: number;
+    note?: string;
+};
+
+export type AnomalySet = {
+    config: AnomalySettings;
+    items: AnomalyInstance[];
+};
+
 export type MaritimeScenario = {
     version: 1;
     name: string;
     seed: string;
     sector: MaritimeSector;
+    anomalies: AnomalySet;
     metadata?: ScenarioMetadata;
 };
 

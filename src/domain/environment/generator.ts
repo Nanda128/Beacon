@@ -6,8 +6,13 @@ import type {
     MaritimeSector,
     SectorBounds,
     Vec2,
-    WaterSettings
+    WaterSettings,
+    AnomalySettings,
+    AnomalyType,
+    AnomalyInstance,
+    AnomalySet,
 } from "../types/environment";
+import {droneHubExclusionRadiusMeters} from "../../config/constants";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -15,12 +20,54 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 const pick = <T>(arr: T[], rng: () => number) => arr[Math.floor(rng() * arr.length)];
 
+const centerOfBounds = (bounds: SectorBounds): Vec2 => ({
+    x: bounds.origin.x + bounds.widthMeters / 2,
+    y: bounds.origin.y + bounds.heightMeters / 2,
+});
+
+const hubRadiusForBounds = (bounds: SectorBounds) => {
+    const maxRadius = Math.min(bounds.widthMeters, bounds.heightMeters) / 2;
+    const safeMargin = Math.max(maxRadius - 10, 0);
+    return Math.max(0, Math.min(droneHubExclusionRadiusMeters, safeMargin));
+};
+
+export const droneHubFromBounds = (bounds: SectorBounds) => ({
+    position: centerOfBounds(bounds),
+    radius: hubRadiusForBounds(bounds),
+});
+
+const isInsideHubSafeZone = (point: Vec2, hub: { position: Vec2; radius: number }) =>
+    hub.radius > 0 && Math.hypot(point.x - hub.position.x, point.y - hub.position.y) <= hub.radius;
+
+const createAnomalyPositionSampler = (sector: MaritimeSector, hub: { position: Vec2; radius: number }, rng: () => number) => {
+    const {bounds} = sector;
+    return () => {
+        for (let attempt = 0; attempt < 32; attempt++) {
+            const x = bounds.origin.x + rng() * bounds.widthMeters;
+            const y = bounds.origin.y + rng() * bounds.heightMeters;
+            const candidate = {x, y};
+            if (!isInsideHubSafeZone(candidate, hub)) return candidate;
+        }
+        const angle = rng() * Math.PI * 2;
+        const radius = hub.radius > 0 ? hub.radius + 5 : 0;
+        const candidate = {
+            x: hub.position.x + Math.cos(angle) * radius,
+            y: hub.position.y + Math.sin(angle) * radius,
+        };
+        return {
+            x: clamp(candidate.x, bounds.origin.x, bounds.origin.x + bounds.widthMeters),
+            y: clamp(candidate.y, bounds.origin.y, bounds.origin.y + bounds.heightMeters),
+        } as Vec2;
+    };
+};
+
 export type GeneratorParams = {
     seed: string;
     boundsKm: { width: number; height: number };
     origin?: Vec2;
     name?: string;
     notes?: string;
+    anomalyConfig?: Partial<AnomalySettings>;
 };
 
 export type WaterTileData = {
@@ -38,8 +85,109 @@ export const defaultWaterSettings: WaterSettings = {
     textureStrength: 0.65,
 };
 
+export const anomalyTypeLabels: Record<AnomalyType, string> = {
+    "person-in-water": "Person in Water",
+    "lifeboat": "Lifeboat",
+    "debris-field": "Debris Field",
+    "false-positive": "False Positive",
+};
+
+export const anomalyTypeOrder: AnomalyType[] = [
+    "person-in-water",
+    "lifeboat",
+    "debris-field",
+    "false-positive",
+];
+
+export const defaultAnomalyConfig: AnomalySettings = {
+    "person-in-water": {count: 3, detectionRadiusMeters: 250},
+    "lifeboat": {count: 1, detectionRadiusMeters: 400},
+    "debris-field": {count: 2, detectionRadiusMeters: 300},
+    "false-positive": {count: 1, detectionRadiusMeters: 180},
+};
+
+const normalizeAnomalyConfig = (config?: Partial<AnomalySettings>): AnomalySettings => {
+    return anomalyTypeOrder.reduce((acc, type) => {
+        const incoming = config?.[type];
+        const count = Math.max(0, Math.round(incoming?.count ?? defaultAnomalyConfig[type].count));
+        const detectionRadiusMeters = Math.max(10, Math.round(incoming?.detectionRadiusMeters ?? defaultAnomalyConfig[type].detectionRadiusMeters));
+        acc[type] = {count, detectionRadiusMeters};
+        return acc;
+    }, {} as AnomalySettings);
+};
+
+export const cloneAnomalyConfig = (config: AnomalySettings): AnomalySettings => JSON.parse(JSON.stringify(config));
+
+const totalAnomalyCount = (config: AnomalySettings) =>
+    anomalyTypeOrder.reduce((sum, type) => sum + (config[type]?.count ?? 0), 0);
+
+const generateAnomalies = (sector: MaritimeSector, seed: string, config: AnomalySettings): AnomalyInstance[] => {
+    const rng = seedrandom(`${seed}-anomalies`);
+    const hub = droneHubFromBounds(sector.bounds);
+    const samplePosition = createAnomalyPositionSampler(sector, hub, rng);
+    const items: AnomalyInstance[] = [];
+    anomalyTypeOrder.forEach((type) => {
+        const typeConfig = config[type];
+        for (let i = 0; i < typeConfig.count; i++) {
+            const position = samplePosition();
+            items.push({
+                id: `${type}-${i + 1}`,
+                type,
+                position,
+                detected: false,
+                detectionRadiusMeters: typeConfig.detectionRadiusMeters,
+            });
+        }
+    });
+    return items;
+};
+
+const sanitizeAnomalyItems = (
+    payloadItems: any,
+    sector: MaritimeSector,
+    seed: string,
+    config: AnomalySettings,
+): AnomalyInstance[] => {
+    const hub = droneHubFromBounds(sector.bounds);
+    const rng = seedrandom(`${seed}-anomalies-sanitize`);
+    const samplePosition = createAnomalyPositionSampler(sector, hub, rng);
+    const items: AnomalyInstance[] = Array.isArray(payloadItems)
+        ? payloadItems
+            .map((item, idx) => {
+                const type: AnomalyType | undefined = anomalyTypeOrder.find((t) => t === item?.type) ?? undefined;
+                if (!type) return null;
+                const x = Number(item?.position?.x);
+                const y = Number(item?.position?.y);
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+                const detectionRadiusMeters = Math.max(10, Number(item?.detectionRadiusMeters ?? config[type].detectionRadiusMeters));
+                const candidate = {
+                    x: clamp(x, sector.bounds.origin.x, sector.bounds.origin.x + sector.bounds.widthMeters),
+                    y: clamp(y, sector.bounds.origin.y, sector.bounds.origin.y + sector.bounds.heightMeters),
+                } as Vec2;
+                const position = isInsideHubSafeZone(candidate, hub) ? samplePosition() : candidate;
+                return {
+                    id: String(item?.id ?? `${type}-${idx + 1}`),
+                    type,
+                    position,
+                    detected: Boolean(item?.detected ?? false),
+                    detectionRadiusMeters,
+                    note: item?.note,
+                } as AnomalyInstance;
+            })
+            .filter(Boolean) as AnomalyInstance[]
+        : [];
+    const expected = totalAnomalyCount(config);
+    if (items.length !== expected) {
+        return generateAnomalies(sector, seed, config);
+    }
+    return items.map((item) => ({
+        ...item,
+        detectionRadiusMeters: item.detectionRadiusMeters || config[item.type].detectionRadiusMeters,
+    }));
+};
+
 export function generateSector(params: GeneratorParams): MaritimeScenario {
-    const {seed, boundsKm, origin, name, notes} = params;
+    const {seed, boundsKm, origin, name, notes, anomalyConfig} = params;
     const rng = seedrandom(seed);
     const widthMeters = Math.max(100, boundsKm.width * 1000);
     const heightMeters = Math.max(100, boundsKm.height * 1000);
@@ -89,11 +237,18 @@ export function generateSector(params: GeneratorParams): MaritimeScenario {
         createdAt: new Date().toISOString(),
     };
 
+    const normalizedAnomalies = normalizeAnomalyConfig(anomalyConfig);
+    const anomalies: AnomalySet = {
+        config: normalizedAnomalies,
+        items: generateAnomalies(sector, seed, normalizedAnomalies),
+    };
+
     return {
         version: 1,
         name: sector.name,
         seed,
         sector,
+        anomalies,
         metadata: {
             createdAt: sector.createdAt,
             notes,
@@ -201,11 +356,19 @@ export function validateScenario(payload: any): MaritimeScenario {
         createdAt: sector.createdAt ?? new Date().toISOString(),
     };
 
+    const normalizedAnomalies = normalizeAnomalyConfig(payload.anomalies?.config);
+    const anomalies: AnomalySet = {
+        config: normalizedAnomalies,
+        items: sanitizeAnomalyItems(payload.anomalies?.items, safeSector, payload.seed, normalizedAnomalies),
+    };
+
     return {
         version: 1,
         name: payload.name ?? safeSector.name,
         seed: payload.seed,
         sector: safeSector,
+        anomalies,
         metadata: payload.metadata,
     };
 }
+
