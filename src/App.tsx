@@ -134,6 +134,7 @@ export default function App() {
     const [coverageActive, setCoverageActive] = useState(false);
     const [coverageOverlap, setCoverageOverlap] = useState(0.15); // 15% overlap default
     const [detectionLog, setDetectionLog] = useState<DetectionLogEntry[]>([]);
+    const [drawerOpen, setDrawerOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 960 : true);
     const scenarioRef = useRef(scenario);
     const dronesRef = useRef<DroneState[]>([]);
     const lastFalseNegativeRef = useRef<Record<string, number>>({});
@@ -690,6 +691,267 @@ export default function App() {
         return () => window.clearInterval(interval);
     }, [appendLog, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
 
+    const toggleDrawer = () => setDrawerOpen((prev) => !prev);
+
+    const scenarioControls = (
+        <div className="panel-card drawer-panel">
+            <Badge style={{marginBottom: 8}}>Scenario Controls</Badge>
+            <ControlGrid>
+                <Field label="Seed">
+                    <input className="field-input" value={seed}
+                           onChange={(e) => setSeed(e.target.value.trim())}/>
+                </Field>
+                <Field label="Width (km)">
+                    <input
+                        className="field-input"
+                        type="number"
+                        min={0.1}
+                        step={0.5}
+                        value={widthKm}
+                        onChange={(e) => setWidthKm(Number(e.target.value))}
+                    />
+                </Field>
+                <Field label="Height (km)">
+                    <input
+                        className="field-input"
+                        type="number"
+                        min={0.1}
+                        step={0.5}
+                        value={heightKm}
+                        onChange={(e) => setHeightKm(Number(e.target.value))}
+                    />
+                </Field>
+                <Field label="Preset">
+                    <select
+                        className="field-input"
+                        value={selectedPreset}
+                        onChange={(e) => applyPreset(e.target.value)}
+                    >
+                        {scenarioPresets.map((preset) => (
+                            <option key={preset.id} value={preset.id}>{preset.label}</option>
+                        ))}
+                    </select>
+                </Field>
+            </ControlGrid>
+
+            <Badge style={{marginTop: 16, marginBottom: 8}}>Anomalies</Badge>
+            <ControlGrid>
+                {anomalyTypeOrder.map((type) => (
+                    <Field key={type} label={anomalyTypeLabels[type]}>
+                        <FieldInline>
+                            <label>
+                                <span className="field-sub">Count</span>
+                                <input
+                                    className="field-input"
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={anomalyConfig[type].count}
+                                    onChange={(e) => handleAnomalyConfigChange(type, "count", Math.max(0, Number(e.target.value)))}
+                                />
+                            </label>
+                            <label>
+                                <span className="field-sub">Detect radius (m)</span>
+                                <input
+                                    className="field-input"
+                                    type="number"
+                                    min={10}
+                                    step={10}
+                                    value={anomalyConfig[type].detectionRadiusMeters}
+                                    onChange={(e) => handleAnomalyConfigChange(type, "detectionRadiusMeters", Math.max(10, Number(e.target.value)))}
+                                />
+                            </label>
+                        </FieldInline>
+                    </Field>
+                ))}
+            </ControlGrid>
+
+            <Badge style={{marginTop: 16, marginBottom: 8}}>Drones</Badge>
+            <ControlGrid>
+                <Field label="Spawn point">
+                    <select className="field-input" value={selectedSpawnPointId}
+                            onChange={(e) => setSelectedSpawnPointId(e.target.value)}>
+                        {spawnPoints.map((point) => (
+                            <option key={point.id} value={point.id}>{point.label}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label="Drone model">
+                    <select className="field-input" value={selectedDroneModelId}
+                            onChange={(e) => setSelectedDroneModelId(e.target.value)}>
+                        {droneModels.map((model) => (
+                            <option key={model.id} value={model.id}>{model.label}</option>
+                        ))}
+                    </select>
+                </Field>
+                <Field label=" " className="field" as="div">
+                    <div style={{display: "flex", gap: 8, alignItems: "flex-end"}}>
+                        <button className="btn" onClick={handleSpawnDrone}>Spawn drone</button>
+                        <button className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
+                            all
+                        </button>
+                        <button className="btn ghost" onClick={clear}>Deselect all</button>
+                    </div>
+                </Field>
+                <Field label="Return to Base">
+                    <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
+                        <button className="btn" onClick={handleRTBImmediate}>RTB Immediately</button>
+                        <button className="btn ghost" onClick={handleRTBAfterCompletion}>RTB After Completion
+                        </button>
+                        <span style={{
+                            fontSize: 12,
+                            opacity: 0.75
+                        }}>Applies to {selectedDroneIds.length > 0 ? "selected" : "all"} drones.</span>
+                    </div>
+                </Field>
+            </ControlGrid>
+            {drones.length > 0 && (
+                <div className="drone-list">
+                    {drones.map((drone) => (
+                        <div key={drone.id} className="drone-pill-row">
+                            <button
+                                className={`drone-pill ${selectedDroneIds.includes(drone.id) ? "active" : ""}`}
+                                onClick={(event) => handleSelectDroneFromList(drone.id, event)}
+                                style={{flex: 1}}
+                            >
+                                <span>{drone.callsign}</span>
+                                <span style={{opacity: 0.7}}>{drone.status}</span>
+                                <span style={{opacity: 0.7}}>· {Math.round(drone.batteryPct)}%</span>
+                                <span
+                                    style={{opacity: 0.7}}>· {drone.batteryMinutesRemaining.toFixed(1)} min left</span>
+                                <span
+                                    style={{opacity: 0.7}}>· Min to hub {drone.returnMinutesRequired.toFixed(1)} min</span>
+                                <span
+                                    style={{opacity: 0.7}}>· Emergency at {drone.emergencyReserveMinutes.toFixed(1)} min</span>
+                            </button>
+                            <label style={{display: "flex", alignItems: "center", gap: 4, fontSize: 12}}>
+                                <span style={{opacity: 0.7}}>Speed</span>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={drone.speedKts}
+                                    onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
+                                    style={{width: 70}}
+                                />
+                                <span style={{opacity: 0.7}}>kts</span>
+                            </label>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            <Badge style={{marginTop: 16, marginBottom: 8}}>Sensors</Badge>
+            <ControlGrid>
+                <Field label="Sensors enabled">
+                    <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                        <input type="checkbox" checked={sensorsEnabled}
+                               onChange={(e) => setSensorsEnabled(e.target.checked)}/>
+                        <span>Run detection loop</span>
+                    </label>
+                </Field>
+                <Field label="Show ranges">
+                    <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                        <input type="checkbox" checked={showSensorRanges}
+                               onChange={(e) => setShowSensorRanges(e.target.checked)}/>
+                        <span>Draw sensor radius</span>
+                    </label>
+                </Field>
+                <Field label="Range (m)">
+                    <input className="field-input" type="number" min={50} step={10}
+                           value={sensorSettings.rangeMeters}
+                           onChange={(e) => handleSensorSettingChange("rangeMeters", Math.max(10, Number(e.target.value)))}/>
+                </Field>
+                <Field label="Optimal P(hit)">
+                    <input className="field-input" type="number" min={0} max={1} step={0.05}
+                           value={sensorSettings.optimalDetectionProbability}
+                           onChange={(e) => handleSensorSettingChange("optimalDetectionProbability", Math.min(1, Math.max(0, Number(e.target.value))))}/>
+                </Field>
+                <Field label="Edge P(hit)">
+                    <input className="field-input" type="number" min={0} max={1} step={0.05}
+                           value={sensorSettings.edgeDetectionProbability}
+                           onChange={(e) => handleSensorSettingChange("edgeDetectionProbability", Math.min(1, Math.max(0, Number(e.target.value))))}/>
+                </Field>
+                <Field label="False positives (/min)">
+                    <input className="field-input" type="number" min={0} step={0.01}
+                           value={sensorSettings.falsePositiveRatePerMinute}
+                           onChange={(e) => handleSensorSettingChange("falsePositiveRatePerMinute", Math.max(0, Number(e.target.value)))}/>
+                </Field>
+                <Field label="Check interval (ms)">
+                    <input className="field-input" type="number" min={100} step={100}
+                           value={sensorSettings.checkIntervalMs}
+                           onChange={(e) => handleSensorSettingChange("checkIntervalMs", Math.max(50, Number(e.target.value)))}/>
+                </Field>
+            </ControlGrid>
+
+            <Badge style={{marginTop: 16, marginBottom: 8}}>Coverage</Badge>
+            <ControlGrid>
+                <Field label="Voronoi coverage">
+                    <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
+                        <button className="btn" onClick={handleRunVoronoi}>Run coverage</button>
+                        <button className="btn ghost" onClick={handleClearVoronoi}
+                                disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear overlay
+                        </button>
+                        <span style={{fontSize: 12, opacity: 0.75}}>
+                             Uses {coverageSourceCount} drone{coverageSourceCount === 1 ? "" : "s"} ({selectedDroneIds.length > 0 ? "selected" : "all"}).
+                         </span>
+                    </div>
+                    <div style={{fontSize: 12, opacity: 0.75, marginTop: 4}}>
+                        Clamps drones to the sector bounds and recomputes whenever positions change while
+                        enabled.
+                    </div>
+                </Field>
+                <Field label="Sweep overlap (%)">
+                    <div style={{display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap"}}>
+                        <input className="field-input" type="number" min={10} max={20} step={1}
+                               value={Math.round(coverageOverlap * 100)}
+                               onChange={(e) => setCoverageOverlap(Math.min(0.2, Math.max(0.1, Number(e.target.value) / 100)))}
+                               style={{width: 90}}/>
+                        <span style={{fontSize: 12, opacity: 0.75}}>Spacing {sweepSpacingMeters} m (based on sensor range)</span>
+                    </div>
+                </Field>
+                <Field label="Lawnmower">
+                    <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
+                        <button className="btn" onClick={handleStartCoverage}>Start coverage</button>
+                        <span style={{fontSize: 12, opacity: 0.75}}>
+                            Generates boustrophedon sweeps with {Math.round(coverageOverlap * 100)}% overlap and injects waypoints per drone.
+                        </span>
+                    </div>
+                </Field>
+            </ControlGrid>
+
+            <ButtonRow>
+                <button className="btn" onClick={handleGenerate}>Generate</button>
+                <button className="btn ghost" onClick={handleRandomSeed}>Random seed</button>
+                <button className="btn ghost" onClick={() => downloadScenarioJSON(scenario)}>Save JSON</button>
+                <label className="btn ghost file-btn">
+                    Load JSON
+                    <input type="file" accept="application/json" onChange={handleFileChange}/>
+                </label>
+            </ButtonRow>
+            <div className="meta-row">
+                <div><strong>Sector</strong> {sectorMeta.bounds.widthMeters / 1000} km
+                    × {sectorMeta.bounds.heightMeters / 1000} km
+                </div>
+                <div><strong>Sea state</strong> {sectorMeta.conditions.seaState}</div>
+                <div><strong>Wind</strong> {sectorMeta.conditions.windKts} kts</div>
+                <div><strong>Visibility</strong> {sectorMeta.conditions.visibilityKm} km</div>
+                <div><strong>Anomalies</strong> {scenario.anomalies.items.filter((a) => a.detected).length}
+                    /{scenario.anomalies.items.length} detected
+                </div>
+                <div>
+                    <strong>Drones</strong> {drones.length} active
+                </div>
+                <div>
+                    <strong>Drone Hub</strong> center at x: {hub.position.x.toFixed(0)} m |
+                    y: {hub.position.y.toFixed(0)} m
+                </div>
+            </div>
+            {message && <div className="callout success">{message}</div>}
+            {error && <div className="callout danger">{error}</div>}
+        </div>
+    );
+
     return (
         <div className="app-shell">
             <header className="toolbar">
@@ -699,263 +961,7 @@ export default function App() {
                 </div>
                 <div className="badge">Seed-based maritime environment</div>
             </header>
-            <main className="content">
-                <div className="panel-card">
-                    <Badge style={{marginBottom: 8}}>Scenario Controls</Badge>
-                    <ControlGrid>
-                        <Field label="Seed">
-                            <input className="field-input" value={seed}
-                                   onChange={(e) => setSeed(e.target.value.trim())}/>
-                        </Field>
-                        <Field label="Width (km)">
-                            <input
-                                className="field-input"
-                                type="number"
-                                min={0.1}
-                                step={0.5}
-                                value={widthKm}
-                                onChange={(e) => setWidthKm(Number(e.target.value))}
-                            />
-                        </Field>
-                        <Field label="Height (km)">
-                            <input
-                                className="field-input"
-                                type="number"
-                                min={0.1}
-                                step={0.5}
-                                value={heightKm}
-                                onChange={(e) => setHeightKm(Number(e.target.value))}
-                            />
-                        </Field>
-                        <Field label="Preset">
-                            <select
-                                className="field-input"
-                                value={selectedPreset}
-                                onChange={(e) => applyPreset(e.target.value)}
-                            >
-                                {scenarioPresets.map((preset) => (
-                                    <option key={preset.id} value={preset.id}>{preset.label}</option>
-                                ))}
-                            </select>
-                        </Field>
-                    </ControlGrid>
-
-                    <Badge style={{marginTop: 16, marginBottom: 8}}>Anomalies</Badge>
-                    <ControlGrid>
-                        {anomalyTypeOrder.map((type) => (
-                            <Field key={type} label={anomalyTypeLabels[type]}>
-                                <FieldInline>
-                                    <label>
-                                        <span className="field-sub">Count</span>
-                                        <input
-                                            className="field-input"
-                                            type="number"
-                                            min={0}
-                                            step={1}
-                                            value={anomalyConfig[type].count}
-                                            onChange={(e) => handleAnomalyConfigChange(type, "count", Math.max(0, Number(e.target.value)))}
-                                        />
-                                    </label>
-                                    <label>
-                                        <span className="field-sub">Detect radius (m)</span>
-                                        <input
-                                            className="field-input"
-                                            type="number"
-                                            min={10}
-                                            step={10}
-                                            value={anomalyConfig[type].detectionRadiusMeters}
-                                            onChange={(e) => handleAnomalyConfigChange(type, "detectionRadiusMeters", Math.max(10, Number(e.target.value)))}
-                                        />
-                                    </label>
-                                </FieldInline>
-                            </Field>
-                        ))}
-                    </ControlGrid>
-
-                    <Badge style={{marginTop: 16, marginBottom: 8}}>Drones</Badge>
-                    <ControlGrid>
-                        <Field label="Spawn point">
-                            <select className="field-input" value={selectedSpawnPointId}
-                                    onChange={(e) => setSelectedSpawnPointId(e.target.value)}>
-                                {spawnPoints.map((point) => (
-                                    <option key={point.id} value={point.id}>{point.label}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <Field label="Drone model">
-                            <select className="field-input" value={selectedDroneModelId}
-                                    onChange={(e) => setSelectedDroneModelId(e.target.value)}>
-                                {droneModels.map((model) => (
-                                    <option key={model.id} value={model.id}>{model.label}</option>
-                                ))}
-                            </select>
-                        </Field>
-                        <Field label=" " className="field" as="div">
-                            <div style={{display: "flex", gap: 8, alignItems: "flex-end"}}>
-                                <button className="btn" onClick={handleSpawnDrone}>Spawn drone</button>
-                                <button className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
-                                    all
-                                </button>
-                                <button className="btn ghost" onClick={clear}>Deselect all</button>
-                            </div>
-                        </Field>
-                        <Field label="Return to Base">
-                            <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                <button className="btn" onClick={handleRTBImmediate}>RTB Immediately</button>
-                                <button className="btn ghost" onClick={handleRTBAfterCompletion}>RTB After Completion
-                                </button>
-                                <span style={{
-                                    fontSize: 12,
-                                    opacity: 0.75
-                                }}>Applies to {selectedDroneIds.length > 0 ? "selected" : "all"} drones.</span>
-                            </div>
-                        </Field>
-                    </ControlGrid>
-                    {drones.length > 0 && (
-                        <div className="drone-list">
-                            {drones.map((drone) => (
-                                <div key={drone.id} className="drone-pill-row">
-                                    <button
-                                        className={`drone-pill ${selectedDroneIds.includes(drone.id) ? "active" : ""}`}
-                                        onClick={(event) => handleSelectDroneFromList(drone.id, event)}
-                                        style={{flex: 1}}
-                                    >
-                                        <span>{drone.callsign}</span>
-                                        <span style={{opacity: 0.7}}>{drone.status}</span>
-                                        <span style={{opacity: 0.7}}>· {Math.round(drone.batteryPct)}%</span>
-                                        <span style={{opacity: 0.7}}>· {drone.batteryMinutesRemaining.toFixed(1)} min left</span>
-                                        <span
-                                            style={{opacity: 0.7}}>· Min to hub {drone.returnMinutesRequired.toFixed(1)} min</span>
-                                        <span
-                                            style={{opacity: 0.7}}>· Emergency at {drone.emergencyReserveMinutes.toFixed(1)} min</span>
-                                    </button>
-                                    <label style={{display: "flex", alignItems: "center", gap: 4, fontSize: 12}}>
-                                        <span style={{opacity: 0.7}}>Speed</span>
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            step={1}
-                                            value={drone.speedKts}
-                                            onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
-                                            style={{width: 70}}
-                                        />
-                                        <span style={{opacity: 0.7}}>kts</span>
-                                    </label>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    <Badge style={{marginTop: 16, marginBottom: 8}}>Sensors</Badge>
-                    <ControlGrid>
-                        <Field label="Sensors enabled">
-                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                <input type="checkbox" checked={sensorsEnabled}
-                                       onChange={(e) => setSensorsEnabled(e.target.checked)}/>
-                                <span>Run detection loop</span>
-                            </label>
-                        </Field>
-                        <Field label="Show ranges">
-                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                <input type="checkbox" checked={showSensorRanges}
-                                       onChange={(e) => setShowSensorRanges(e.target.checked)}/>
-                                <span>Draw sensor radius</span>
-                            </label>
-                        </Field>
-                        <Field label="Range (m)">
-                            <input className="field-input" type="number" min={50} step={10}
-                                   value={sensorSettings.rangeMeters}
-                                   onChange={(e) => handleSensorSettingChange("rangeMeters", Math.max(10, Number(e.target.value)))}/>
-                        </Field>
-                        <Field label="Optimal P(hit)">
-                            <input className="field-input" type="number" min={0} max={1} step={0.05}
-                                   value={sensorSettings.optimalDetectionProbability}
-                                   onChange={(e) => handleSensorSettingChange("optimalDetectionProbability", Math.min(1, Math.max(0, Number(e.target.value))))}/>
-                        </Field>
-                        <Field label="Edge P(hit)">
-                            <input className="field-input" type="number" min={0} max={1} step={0.05}
-                                   value={sensorSettings.edgeDetectionProbability}
-                                   onChange={(e) => handleSensorSettingChange("edgeDetectionProbability", Math.min(1, Math.max(0, Number(e.target.value))))}/>
-                        </Field>
-                        <Field label="False positives (/min)">
-                            <input className="field-input" type="number" min={0} step={0.01}
-                                   value={sensorSettings.falsePositiveRatePerMinute}
-                                   onChange={(e) => handleSensorSettingChange("falsePositiveRatePerMinute", Math.max(0, Number(e.target.value)))}/>
-                        </Field>
-                        <Field label="Check interval (ms)">
-                            <input className="field-input" type="number" min={100} step={100}
-                                   value={sensorSettings.checkIntervalMs}
-                                   onChange={(e) => handleSensorSettingChange("checkIntervalMs", Math.max(50, Number(e.target.value)))}/>
-                        </Field>
-                    </ControlGrid>
-
-                    <Badge style={{marginTop: 16, marginBottom: 8}}>Coverage</Badge>
-                    <ControlGrid>
-                        <Field label="Voronoi coverage">
-                            <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                <button className="btn" onClick={handleRunVoronoi}>Run coverage</button>
-                                <button className="btn ghost" onClick={handleClearVoronoi}
-                                        disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear overlay
-                                </button>
-                                <span style={{fontSize: 12, opacity: 0.75}}>
-                                     Uses {coverageSourceCount} drone{coverageSourceCount === 1 ? "" : "s"} ({selectedDroneIds.length > 0 ? "selected" : "all"}).
-                                 </span>
-                            </div>
-                            <div style={{fontSize: 12, opacity: 0.75, marginTop: 4}}>
-                                Clamps drones to the sector bounds and recomputes whenever positions change while
-                                enabled.
-                            </div>
-                        </Field>
-                        <Field label="Sweep overlap (%)">
-                            <div style={{display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap"}}>
-                                <input className="field-input" type="number" min={10} max={20} step={1}
-                                       value={Math.round(coverageOverlap * 100)}
-                                       onChange={(e) => setCoverageOverlap(Math.min(0.2, Math.max(0.1, Number(e.target.value) / 100)))}
-                                       style={{width: 90}}/>
-                                <span style={{fontSize: 12, opacity: 0.75}}>Spacing {sweepSpacingMeters} m (based on sensor range)</span>
-                            </div>
-                        </Field>
-                        <Field label="Lawnmower">
-                            <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                <button className="btn" onClick={handleStartCoverage}>Start coverage</button>
-                                <span style={{fontSize: 12, opacity: 0.75}}>
-                                    Generates boustrophedon sweeps with {Math.round(coverageOverlap * 100)}% overlap and injects waypoints per drone.
-                                </span>
-                            </div>
-                        </Field>
-                    </ControlGrid>
-
-                    <ButtonRow>
-                        <button className="btn" onClick={handleGenerate}>Generate</button>
-                        <button className="btn ghost" onClick={handleRandomSeed}>Random seed</button>
-                        <button className="btn ghost" onClick={() => downloadScenarioJSON(scenario)}>Save JSON</button>
-                        <label className="btn ghost file-btn">
-                            Load JSON
-                            <input type="file" accept="application/json" onChange={handleFileChange}/>
-                        </label>
-                    </ButtonRow>
-                    <div className="meta-row">
-                        <div><strong>Sector</strong> {sectorMeta.bounds.widthMeters / 1000} km
-                            × {sectorMeta.bounds.heightMeters / 1000} km
-                        </div>
-                        <div><strong>Sea state</strong> {sectorMeta.conditions.seaState}</div>
-                        <div><strong>Wind</strong> {sectorMeta.conditions.windKts} kts</div>
-                        <div><strong>Visibility</strong> {sectorMeta.conditions.visibilityKm} km</div>
-                        <div><strong>Anomalies</strong> {scenario.anomalies.items.filter((a) => a.detected).length}
-                            /{scenario.anomalies.items.length} detected
-                        </div>
-                        <div>
-                            <strong>Drones</strong> {drones.length} active
-                        </div>
-                        <div>
-                            <strong>Drone Hub</strong> center at x: {hub.position.x.toFixed(0)} m |
-                            y: {hub.position.y.toFixed(0)} m
-                        </div>
-                    </div>
-                    {message && <div className="callout success">{message}</div>}
-                    {error && <div className="callout danger">{error}</div>}
-                </div>
-
+            <main className={`content ${drawerOpen ? "content-with-drawer" : ""}`}>
                 <div className="viewer-row">
                     <MaritimeCanvas2D gridSpacing={200} scenario={scenario} onToggleAnomaly={handleToggleAnomaly}
                                       drones={drones}
@@ -991,6 +997,18 @@ export default function App() {
                     </div>
                 </div>
             </main>
+            <div className={`scenario-drawer ${drawerOpen ? "open" : "closed"}`}>
+                <div className="drawer-surface">
+                    <button className="drawer-handle" onClick={toggleDrawer} aria-expanded={drawerOpen}>
+                        <span style={{fontWeight: 700}}>Scenario controls</span>
+                        <span style={{opacity: 0.75}}>{drawerOpen ? "Hide" : "Show"}</span>
+                        <span className="drawer-chevron">{drawerOpen ? "▼" : "▲"}</span>
+                    </button>
+                    <div className="drawer-body">
+                        {scenarioControls}
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }

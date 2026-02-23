@@ -115,7 +115,13 @@ const rebalanceVoronoiAreas = (
     maxIterations = 10,
     tolerance = 0.15,
 ): VoronoiCell[] => {
-    const targetArea = (bounds.widthMeters * bounds.heightMeters) / sites.length;
+    const totalArea = bounds.widthMeters * bounds.heightMeters;
+    const weights = sites.map((s) => Math.max(0.1, s.drone.speedKts ?? 0));
+    const weightSum = weights.reduce((a, b) => a + b, 0) || 1;
+    const targetAreaByDrone = new Map<string, number>();
+    sites.forEach((s, idx) => {
+        targetAreaByDrone.set(s.drone.id, totalArea * (weights[idx] / weightSum));
+    });
     const center = {
         x: bounds.origin.x + bounds.widthMeters / 2,
         y: bounds.origin.y + bounds.heightMeters / 2,
@@ -127,7 +133,10 @@ const rebalanceVoronoiAreas = (
         const cells = buildCells(workingSites, bounds);
         lastCells = cells;
         if (cells.length === 0) break;
-        const deviations = cells.map((c) => Math.abs(polygonArea(c.polygon) - targetArea) / targetArea);
+        const deviations = cells.map((c) => {
+            const target = targetAreaByDrone.get(c.droneId) ?? (totalArea / sites.length);
+            return Math.abs(polygonArea(c.polygon) - target) / target;
+        });
         const maxDeviation = deviations.length > 0 ? Math.max(...deviations) : 0;
         if (maxDeviation <= tolerance) return cells;
         const cellById = new Map(cells.map((c) => [c.droneId, c]));
@@ -135,7 +144,8 @@ const rebalanceVoronoiAreas = (
         workingSites = workingSites.map((site) => {
             const cell = cellById.get(site.drone.id);
             if (!cell) return site;
-            const areaError = (polygonArea(cell.polygon) - targetArea) / targetArea;
+            const target = targetAreaByDrone.get(site.drone.id) ?? (totalArea / sites.length);
+            const areaError = (polygonArea(cell.polygon) - target) / target;
             const dir = {
                 x: site.position.x - center.x,
                 y: site.position.y - center.y,
