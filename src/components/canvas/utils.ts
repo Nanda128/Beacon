@@ -1,8 +1,8 @@
 import type {Vec2} from "../../domain/types/environment";
 
-export type CameraState = {center: Vec2; scale: number};
-export type Bounds = {origin: Vec2; widthMeters: number; heightMeters: number};
-export type Size = {width: number; height: number};
+export type CameraState = { center: Vec2; scale: number };
+export type Bounds = { origin: Vec2; widthMeters: number; heightMeters: number };
+export type Size = { width: number; height: number };
 
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 

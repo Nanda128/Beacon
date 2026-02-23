@@ -62,6 +62,30 @@ export type AnomalySet = {
     items: AnomalyInstance[];
 };
 
+export type SensorConfig = {
+    rangeMeters: number;
+    optimalDetectionProbability: number; // probability at center of range
+    edgeDetectionProbability: number; // probability at the edge of range
+    falsePositiveRatePerMinute: number;
+    checkIntervalMs: number;
+    logLimit: number;
+};
+
+export type DetectionLogEntry = {
+    id: string;
+    timestamp: number;
+    kind: "detected" | "false-negative" | "false-positive" | "battery-warning" | "battery-emergency";
+    droneId?: string;
+    anomalyId?: string;
+    anomalyType?: AnomalyType;
+    position: Vec2;
+    confidence?: number;
+    message: string;
+    batteryPct?: number;
+    batteryMinutesRemaining?: number;
+    returnMinutesRequired?: number;
+};
+
 export type MaritimeScenario = {
     version: 1;
     name: string;
@@ -70,4 +94,3 @@ export type MaritimeScenario = {
     anomalies: AnomalySet;
     metadata?: ScenarioMetadata;
 };
-

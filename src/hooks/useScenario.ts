@@ -44,7 +44,10 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
         setError(null);
     }, [onScenarioReset]);
 
-    const regenerate = useCallback((nextSeed: string, boundsKm: {width: number; height: number}, nextConfig?: AnomalySettings) => {
+    const regenerate = useCallback((nextSeed: string, boundsKm: {
+        width: number;
+        height: number
+    }, nextConfig?: AnomalySettings) => {
         const effectiveConfig = nextConfig ?? anomalyConfig;
         const next = generateSector({seed: nextSeed, boundsKm, anomalyConfig: effectiveConfig});
         applyScenario(next, `Generated sector ${boundsKm.width.toFixed(1)} km x ${boundsKm.height.toFixed(1)} km with seed ${nextSeed}`);
@@ -94,6 +97,16 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
         }));
     }, []);
 
+    const updateAnomalies = useCallback((updater: (items: MaritimeScenario["anomalies"]["items"]) => MaritimeScenario["anomalies"]["items"]) => {
+        setScenario((prev) => ({
+            ...prev,
+            anomalies: {
+                ...prev.anomalies,
+                items: updater(prev.anomalies.items),
+            },
+        }));
+    }, []);
+
     const sectorMeta = useMemo(() => scenario.sector, [scenario]);
 
     return {
@@ -121,6 +134,6 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
         handleToggleAnomaly,
         applyScenario,
         downloadScenarioJSON,
+        updateAnomalies,
     };
 }
-

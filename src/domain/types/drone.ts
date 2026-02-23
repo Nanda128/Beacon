@@ -1,4 +1,5 @@
 import type {Vec2} from "./environment";
+import type {CoveragePlan} from "../coverage/planner";
 
 export type DroneStatus = "idle" | "launching" | "enroute" | "search" | "returning" | "landed" | "error";
 
@@ -23,6 +24,9 @@ export type DroneState = {
     lastUpdate: number;
     targetPosition?: Vec2;
     waypoints: Vec2[];
+    coveragePlan?: CoveragePlan;
+    returnMinutesRequired: number;
+    emergencyReserveMinutes: number;
 };
 
 export type SpawnPoint = {
