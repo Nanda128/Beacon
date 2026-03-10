@@ -64,8 +64,8 @@ export type AnomalySet = {
 
 export type SensorConfig = {
     rangeMeters: number;
-    optimalDetectionProbability: number; // probability at center of range
-    edgeDetectionProbability: number; // probability at the edge of range
+    optimalDetectionProbability: number;
+    edgeDetectionProbability: number;
     falsePositiveRatePerMinute: number;
     checkIntervalMs: number;
     logLimit: number;

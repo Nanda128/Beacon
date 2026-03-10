@@ -27,6 +27,8 @@ export type DroneState = {
     coveragePlan?: CoveragePlan;
     returnMinutesRequired: number;
     emergencyReserveMinutes: number;
+    swarmEnabled?: boolean;
+    avoidanceOverride?: boolean;
 };
 
 export type SpawnPoint = {

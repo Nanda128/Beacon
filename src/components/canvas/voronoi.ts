@@ -51,7 +51,6 @@ const spreadCoincident = (points: { drone: DroneState; position: Vec2 }[], bound
 
 const polygonCentroid = (points: Vec2[]): Vec2 => {
     if (points.length === 0) return {x: 0, y: 0};
-    // Use area-weighted centroid; fallback to average if degenerate
     let area = 0;
     let cx = 0;
     let cy = 0;

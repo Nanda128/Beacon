@@ -69,21 +69,31 @@ const intersectHorizontal = (poly: Vec2[], y: number): Vec2[] => {
     return hits;
 };
 
+const addLanesFromHits = (
+    hits: Vec2[],
+    lanes: CoverageLane[],
+    laneIndexStart: number,
+): number => {
+    let laneIndex = laneIndexStart;
+    for (let i = 0; i + 1 < hits.length; i += 2) {
+        const start = laneIndex % 2 === 0 ? hits[i] : hits[i + 1];
+        const end = laneIndex % 2 === 0 ? hits[i + 1] : hits[i];
+        lanes.push({start, end});
+        laneIndex += 1;
+    }
+    return laneIndex;
+};
+
 const buildLanes = (poly: Vec2[], spacing: number) => {
     const {minX, minY, maxX, maxY, width, height} = bbox(poly);
-    const sweepVertical = width >= height; // choose axis to minimize turns
+    const sweepVertical = width >= height;
     const lanes: CoverageLane[] = [];
     if (sweepVertical) {
         let x = minX + spacing / 2;
         let laneIndex = 0;
         while (x <= maxX + 1e-6) {
             const hits = intersectVertical(poly, x).sort((a, b) => a.y - b.y);
-            for (let i = 0; i + 1 < hits.length; i += 2) {
-                const start = laneIndex % 2 === 0 ? hits[i] : hits[i + 1];
-                const end = laneIndex % 2 === 0 ? hits[i + 1] : hits[i];
-                lanes.push({start, end});
-                laneIndex += 1;
-            }
+            laneIndex = addLanesFromHits(hits, lanes, laneIndex);
             x += spacing;
         }
     } else {
@@ -91,12 +101,7 @@ const buildLanes = (poly: Vec2[], spacing: number) => {
         let laneIndex = 0;
         while (y <= maxY + 1e-6) {
             const hits = intersectHorizontal(poly, y).sort((a, b) => a.x - b.x);
-            for (let i = 0; i + 1 < hits.length; i += 2) {
-                const start = laneIndex % 2 === 0 ? hits[i] : hits[i + 1];
-                const end = laneIndex % 2 === 0 ? hits[i + 1] : hits[i];
-                lanes.push({start, end});
-                laneIndex += 1;
-            }
+            laneIndex = addLanesFromHits(hits, lanes, laneIndex);
             y += spacing;
         }
     }
@@ -109,7 +114,7 @@ const lanesToWaypoints = (lanes: CoverageLane[]): Vec2[] => {
         points.push(start, end);
         const next = lanes[idx + 1];
         if (next) {
-            points.push(end, next.start); // connector keeps path explicit for existing waypoint follower
+            points.push(end, next.start);
         }
     });
     return points;
@@ -139,4 +144,3 @@ export const planCoveragePaths = (
         };
     }).filter((plan) => plan.lanes.length > 0 && plan.waypoints.length > 0);
 };
-
