@@ -8,7 +8,13 @@ import {
     lastModelStorageKey,
     droneHubReturnReserveMinutes,
     batteryWarningThresholds,
-    batteryEmergencyBufferMinutes
+    batteryEmergencyBufferMinutes,
+    defaultMaxSteeringAngleDegPerSec,
+    defaultNeighborRadiusMeters,
+    defaultSafetyDistanceMeters,
+    defaultSwarmAlignmentWeight,
+    defaultSwarmCohesionWeight,
+    defaultSwarmSeparationWeight
 } from "./config/constants";
 import {defaultSensorConfig} from "./config/sensors";
 import {scenarioPresets} from "./data/scenarios";
@@ -21,10 +27,12 @@ import "./index.css";
 import {droneHubFromBounds} from "./domain/environment/generator";
 import {planCoveragePaths, type CoveragePlan} from "./domain/coverage/planner";
 import {computeVoronoiCells, type VoronoiCell} from "./components/canvas/voronoi";
+import {computeSwarmAdjustments, type SwarmBehaviourParams} from "./domain/swarm/behaviour";
 
 export default function App() {
     const [drones, setDrones] = useState<DroneState[]>([]);
     const {selectedIds: selectedDroneIds, select, add, toggle, clear} = useDroneSelection();
+    const [swarmEnabledGlobal] = useState(true);
     const resetDrones = useCallback(() => {
         setDrones([]);
         batteryWarningStateRef.current = {};
@@ -132,13 +140,21 @@ export default function App() {
     const [voronoiCells, setVoronoiCells] = useState<VoronoiCell[]>([]);
     const [coveragePlans, setCoveragePlans] = useState<CoveragePlan[]>([]);
     const [coverageActive, setCoverageActive] = useState(false);
-    const [coverageOverlap, setCoverageOverlap] = useState(0.15); // 15% overlap default
+    const [coverageOverlap, setCoverageOverlap] = useState(0.15);
     const [detectionLog, setDetectionLog] = useState<DetectionLogEntry[]>([]);
     const [drawerOpen, setDrawerOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 960 : true);
     const scenarioRef = useRef(scenario);
     const dronesRef = useRef<DroneState[]>([]);
     const lastFalseNegativeRef = useRef<Record<string, number>>({});
     const batteryWarningStateRef = useRef<Record<string, { thresholds: Set<number>; emergency: boolean }>>({});
+    const swarmParamsRef = useRef<SwarmBehaviourParams>({
+        safetyDistanceMeters: defaultSafetyDistanceMeters,
+        neighborRadiusMeters: defaultNeighborRadiusMeters,
+        separationWeight: defaultSwarmSeparationWeight,
+        cohesionWeight: defaultSwarmCohesionWeight,
+        alignmentWeight: defaultSwarmAlignmentWeight,
+        maxSteeringAngleDegPerSec: defaultMaxSteeringAngleDegPerSec,
+    });
 
     useEffect(() => {
         const stored = localStorage.getItem(lastModelStorageKey);
@@ -215,6 +231,8 @@ export default function App() {
             waypoints: [],
             returnMinutesRequired: 0,
             emergencyReserveMinutes: 0,
+            swarmEnabled: swarmEnabledGlobal,
+            avoidanceOverride: false,
         };
         const returnMinutesRequired = computeReturnMinutes(newDrone);
         const emergencyReserveMinutes = computeEmergencyReserve(newDrone);
@@ -393,7 +411,18 @@ export default function App() {
             lastFrameRef.current = timestamp;
             const events: DetectionLogEntry[] = [];
             const now = Date.now();
+
+            const bounds = scenario.sector.bounds;
+            const swarmParams = swarmParamsRef.current;
+            const baseDrones = dronesRef.current;
+            const swarmAdjustments = swarmEnabledGlobal
+                ? computeSwarmAdjustments(baseDrones, swarmParams, bounds, dtSeconds)
+                : {};
+
             setDrones((prev) => prev.map((drone) => {
+                const swarmAdj = (!drone.swarmEnabled && drone.swarmEnabled !== undefined) || drone.avoidanceOverride
+                    ? undefined
+                    : swarmAdjustments[drone.id];
                 const queue = drone.waypoints ?? [];
                 let target = drone.targetPosition;
                 let remainingQueue = queue;
@@ -486,55 +515,21 @@ export default function App() {
                 const dx = target.x - drone.position.x;
                 const dy = target.y - drone.position.y;
                 const distance = Math.hypot(dx, dy);
-                const headingDeg = distance > 0.001 ? (Math.atan2(dy, dx) * 180) / Math.PI : drone.headingDeg;
                 const enrouteStatus = needsReturn ? "returning" : "enroute";
-                if (distance < 0.01) {
-                    if (remainingQueue.length > 0) {
-                        const [nextTarget, ...rest] = remainingQueue;
-                        return {
-                            ...drone,
-                            position: clampToBounds(target),
-                            headingDeg,
-                            targetPosition: nextTarget,
-                            waypoints: rest,
-                            status: enrouteStatus,
-                            batteryMinutesRemaining,
-                            batteryPct,
-                            returnMinutesRequired,
-                            emergencyReserveMinutes,
-                            lastUpdate: now
-                        };
-                    }
-                    const atHub = Math.hypot(target.x - hub.position.x, target.y - hub.position.y) < 1;
-                    return {
-                        ...drone,
-                        position: clampToBounds(target),
-                        headingDeg,
-                        targetPosition: undefined,
-                        waypoints: [],
-                        status: atHub ? "landed" : "idle",
-                        batteryMinutesRemaining,
-                        batteryPct,
-                        returnMinutesRequired,
-                        emergencyReserveMinutes,
-                        lastUpdate: now
-                    };
+                let headingDeg = distance > 0.001 ? (Math.atan2(dy, dx) * 180) / Math.PI : drone.headingDeg;
+                if (swarmAdj && Number.isFinite(swarmAdj.headingDeltaDeg)) {
+                    headingDeg += swarmAdj.headingDeltaDeg;
+                    if (headingDeg > 180) headingDeg -= 360;
+                    if (headingDeg <= -180) headingDeg += 360;
                 }
+                const dirX = Math.cos((headingDeg * Math.PI) / 180);
+                const dirY = Math.sin((headingDeg * Math.PI) / 180);
                 const maxStep = speedMs * dtSeconds;
-                if (maxStep <= 0) return {
-                    ...drone,
-                    batteryMinutesRemaining,
-                    batteryPct,
-                    status: statusBase,
-                    returnMinutesRequired,
-                    emergencyReserveMinutes
-                };
-                const ratio = maxStep >= distance ? 1 : maxStep / distance;
                 const nextPos = clampToBounds({
-                    x: drone.position.x + dx * ratio,
-                    y: drone.position.y + dy * ratio,
+                    x: drone.position.x + dirX * maxStep,
+                    y: drone.position.y + dirY * maxStep,
                 });
-                const reached = ratio >= 1 || Math.hypot(target.x - nextPos.x, target.y - nextPos.y) < 0.1;
+                const reached = maxStep >= distance || Math.hypot(target.x - nextPos.x, target.y - nextPos.y) < 0.1;
                 if (reached) {
                     if (remainingQueue.length > 0) {
                         const [nextTarget, ...rest] = remainingQueue;
@@ -542,9 +537,9 @@ export default function App() {
                             ...drone,
                             position: clampToBounds(target),
                             headingDeg,
-                            status: enrouteStatus,
                             targetPosition: nextTarget,
                             waypoints: rest,
+                            status: enrouteStatus,
                             batteryMinutesRemaining,
                             batteryPct,
                             returnMinutesRequired,
@@ -557,9 +552,9 @@ export default function App() {
                         ...drone,
                         position: clampToBounds(target),
                         headingDeg,
-                        status: atHub ? "landed" : "idle",
                         targetPosition: undefined,
                         waypoints: [],
+                        status: atHub ? "landed" : "idle",
                         batteryMinutesRemaining,
                         batteryPct,
                         returnMinutesRequired,
@@ -592,7 +587,7 @@ export default function App() {
             cancelAnimationFrame(raf);
             lastFrameRef.current = null;
         };
-    }, [appendLog, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage]);
+    }, [appendLog, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
 
     useEffect(() => {
         if (!sensorsEnabled) return;
@@ -824,18 +819,34 @@ export default function App() {
                                 <span
                                     style={{opacity: 0.7}}>· Emergency at {drone.emergencyReserveMinutes.toFixed(1)} min</span>
                             </button>
-                            <label style={{display: "flex", alignItems: "center", gap: 4, fontSize: 12}}>
-                                <span style={{opacity: 0.7}}>Speed</span>
-                                <input
-                                    type="number"
-                                    min={0}
-                                    step={1}
-                                    value={drone.speedKts}
-                                    onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
-                                    style={{width: 70}}
-                                />
-                                <span style={{opacity: 0.7}}>kts</span>
-                            </label>
+                            <div style={{display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end"}}>
+                                <label style={{display: "flex", alignItems: "center", gap: 4, fontSize: 12}}>
+                                    <span style={{opacity: 0.7}}>Speed</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={drone.speedKts}
+                                        onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
+                                        style={{width: 70}}
+                                    />
+                                    <span style={{opacity: 0.7}}>kts</span>
+                                </label>
+                                <label style={{display: "flex", alignItems: "center", gap: 4, fontSize: 11}}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!drone.avoidanceOverride}
+                                        onChange={(e) => {
+                                            const checked = e.target.checked;
+                                            setDrones((prev) => prev.map((d) => d.id === drone.id ? {
+                                                ...d,
+                                                avoidanceOverride: checked,
+                                            } : d));
+                                        }}
+                                    />
+                                    <span style={{opacity: 0.8}}>Override avoidance</span>
+                                </label>
+                            </div>
                         </div>
                     ))}
                 </div>
