@@ -2,6 +2,7 @@ import type React from "react";
 import {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 import type {DetectionLogEntry, SensorConfig, Vec2} from "../domain/types/environment";
 import type {DroneState, SpawnPoint} from "../domain/types/drone";
+import type {Alert} from "../domain/types/alert";
 import {useScenario} from "../hooks/useScenario";
 import {useDroneSelection} from "../hooks/useDroneSelection";
 import {defaultSensorConfig} from "../config/sensors";
@@ -11,6 +12,9 @@ import {
     droneHubReturnReserveMinutes,
     batteryEmergencyBufferMinutes,
 } from "../config/constants";
+import {alertLogLimit} from "../config/alerts";
+import {defaultCommsConfig} from "../config/comms";
+import type {CommsConfig} from "../domain/types/comms";
 import {droneHubFromBounds} from "../domain/environment/generator";
 import {createDroneId} from "../domain/types/drone";
 import type {SwarmBehaviourParams} from "../domain/swarm/behaviour";
@@ -24,6 +28,7 @@ import {
 } from "../config/constants";
 import type {CoveragePlan} from "../domain/coverage/planner";
 import type {VoronoiCell} from "../components/canvas/voronoi";
+import {getPresetById} from "../data/scenarios";
 
 export type MissionPhase = "landing" | "setup" | "simulation";
 
@@ -44,6 +49,7 @@ type MissionContextValue = {
     selectedDroneModelId: string;
     setSelectedDroneModelId: (id: string) => void;
     handleSpawnDrone: () => void;
+    applyPresetDroneSet: (presetId: string) => void;
 
     sensorSettings: SensorConfig;
     setSensorSettings: React.Dispatch<React.SetStateAction<SensorConfig>>;
@@ -68,11 +74,23 @@ type MissionContextValue = {
     setDetectionLog: React.Dispatch<React.SetStateAction<DetectionLogEntry[]>>;
     appendLog: (entries: DetectionLogEntry[]) => void;
 
+    alerts: Alert[];
+    setAlerts: React.Dispatch<React.SetStateAction<Alert[]>>;
+    appendAlerts: (newAlerts: Alert[]) => void;
+    acknowledgeAlert: (id: string) => void;
+    acknowledgeAllAlerts: () => void;
+    alertAudioEnabled: boolean;
+    setAlertAudioEnabled: (v: boolean) => void;
+    unacknowledgedAlertCount: number;
+
     manualInterventionEnabled: boolean;
     setManualInterventionEnabled: (v: boolean) => void;
 
     fogOfWarEnabled: boolean;
     setFogOfWarEnabled: (v: boolean) => void;
+
+    commsConfig: CommsConfig;
+    setCommsConfig: React.Dispatch<React.SetStateAction<CommsConfig>>;
 
     swarmEnabledGlobal: boolean;
     swarmParamsRef: React.MutableRefObject<SwarmBehaviourParams>;
@@ -138,8 +156,11 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
     const [coverageActive, setCoverageActive] = useState(false);
     const [coverageOverlap, setCoverageOverlap] = useState(0.15);
     const [detectionLog, setDetectionLog] = useState<DetectionLogEntry[]>([]);
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    const [alertAudioEnabled, setAlertAudioEnabled] = useState(true);
     const [manualInterventionEnabled, setManualInterventionEnabled] = useState(false);
     const [fogOfWarEnabled, setFogOfWarEnabled] = useState(false);
+    const [commsConfig, setCommsConfig] = useState<CommsConfig>({...defaultCommsConfig});
 
     const swarmParamsRef = useRef<SwarmBehaviourParams>({
         safetyDistanceMeters: defaultSafetyDistanceMeters,
@@ -195,9 +216,42 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
     const appendLog = useCallback((entries: DetectionLogEntry[]) => {
         setDetectionLog((prev) => {
             const next = [...entries, ...prev];
-            return next.slice(0, sensorSettings.logLimit);
+            const seen = new Set<string>();
+            const deduped = next.filter((entry) => {
+                if (seen.has(entry.id)) return false;
+                seen.add(entry.id);
+                return true;
+            });
+            return deduped.slice(0, sensorSettings.logLimit);
         });
     }, [sensorSettings.logLimit]);
+
+    const appendAlerts = useCallback((newAlerts: Alert[]) => {
+        if (newAlerts.length === 0) return;
+        setAlerts((prev) => {
+            const next = [...newAlerts, ...prev];
+            return next.slice(0, alertLogLimit);
+        });
+    }, []);
+
+    const acknowledgeAlert = useCallback((id: string) => {
+        const now = Date.now();
+        setAlerts((prev) =>
+            prev.map((a) => (a.id === id ? {...a, acknowledged: true, acknowledgedAt: now} : a)),
+        );
+    }, []);
+
+    const acknowledgeAllAlerts = useCallback(() => {
+        const now = Date.now();
+        setAlerts((prev) =>
+            prev.map((a) => (a.acknowledged ? a : {...a, acknowledged: true, acknowledgedAt: now})),
+        );
+    }, []);
+
+    const unacknowledgedAlertCount = useMemo(
+        () => alerts.filter((a) => !a.acknowledged).length,
+        [alerts],
+    );
 
     const handleSensorSettingChange = useCallback((key: keyof SensorConfig, value: number) => {
         setSensorSettings((prev) => ({...prev, [key]: value}));
@@ -234,6 +288,73 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         setMessage(`Spawned ${model.label.split(" (")[0]} as ${hydrated.callsign} at ${spawn.label}`);
     }, [clampToBounds, computeEmergencyReserve, computeReturnMinutes, drones.length, hub.position, seed, select, selectedDroneModelId, selectedSpawnPointId, setMessage, spawnPoints, swarmEnabledGlobal]);
 
+    const applyPresetDroneSet = useCallback((presetId: string) => {
+        const preset = getPresetById(presetId);
+        if (!preset?.droneSet) return;
+
+        const flattenedModelIds = preset.droneSet.entries.flatMap((entry) =>
+            Array.from({length: Math.max(0, Math.round(entry.count))}, () => entry.modelId),
+        );
+        if (flattenedModelIds.length === 0) {
+            resetDrones();
+            return;
+        }
+
+        const center = hub.position;
+        const nextDrones: DroneState[] = flattenedModelIds.map((modelId, idx) => {
+            const model = droneModels.find((m) => m.id === modelId) ?? droneModels[0];
+            const ring = Math.floor(idx / 10);
+            const radius = 60 + ring * 45;
+            const angle = (idx % 10) / 10 * Math.PI * 2;
+            const position = clampToBounds({
+                x: center.x + Math.cos(angle) * radius,
+                y: center.y + Math.sin(angle) * radius,
+            });
+
+            const base: DroneState = {
+                id: createDroneId(seed),
+                callsign: `DR-${(idx + 1).toString().padStart(2, "0")}`,
+                position,
+                headingDeg: (angle * 180) / Math.PI,
+                status: "idle",
+                speedKts: model.speedKts,
+                batteryPct: 100,
+                batteryLifeMinutes: model.batteryLifeMinutes,
+                batteryMinutesRemaining: model.batteryLifeMinutes,
+                homePosition: center,
+                lastUpdate: Date.now(),
+                waypoints: [],
+                returnMinutesRequired: 0,
+                emergencyReserveMinutes: 0,
+                swarmEnabled: swarmEnabledGlobal,
+                avoidanceOverride: false,
+            };
+
+            return {
+                ...base,
+                returnMinutesRequired: computeReturnMinutes(base),
+                emergencyReserveMinutes: computeEmergencyReserve(base),
+            };
+        });
+
+        const warningState: Record<string, { thresholds: Set<number>; emergency: boolean }> = {};
+        nextDrones.forEach((drone) => {
+            warningState[drone.id] = {thresholds: new Set(), emergency: false};
+        });
+
+        batteryWarningStateRef.current = warningState;
+        setDrones(nextDrones);
+        clear();
+        select([nextDrones[0].id]);
+
+        const firstModelId = preset.droneSet.entries[0]?.modelId;
+        if (firstModelId && droneModels.some((m) => m.id === firstModelId)) {
+            setSelectedDroneModelId(firstModelId);
+        }
+
+        setMessage(`Prepared ${nextDrones.length} drones for preset ${preset.label}`);
+    }, [clampToBounds, clear, computeEmergencyReserve, computeReturnMinutes, hub.position, resetDrones, seed, select, setMessage, swarmEnabledGlobal]);
+
     const value = useMemo<MissionContextValue>(() => ({
         phase, setPhase,
         scenario: scenarioHook,
@@ -243,7 +364,7 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         spawnPoints, hub,
         selectedSpawnPointId, setSelectedSpawnPointId,
         selectedDroneModelId, setSelectedDroneModelId,
-        handleSpawnDrone,
+        handleSpawnDrone, applyPresetDroneSet,
         sensorSettings, setSensorSettings,
         sensorsEnabled, setSensorsEnabled,
         showSensorRanges, setShowSensorRanges,
@@ -254,20 +375,28 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         coverageActive, setCoverageActive,
         coverageOverlap, setCoverageOverlap,
         detectionLog, setDetectionLog, appendLog,
+        alerts, setAlerts, appendAlerts,
+        acknowledgeAlert, acknowledgeAllAlerts,
+        alertAudioEnabled, setAlertAudioEnabled,
+        unacknowledgedAlertCount,
         manualInterventionEnabled, setManualInterventionEnabled,
         fogOfWarEnabled, setFogOfWarEnabled,
+        commsConfig, setCommsConfig,
         swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,
     }), [
         phase, scenarioHook, drones, selectedDroneIds, droneSelection,
         spawnPoints, hub, selectedSpawnPointId, selectedDroneModelId,
-        handleSpawnDrone,
+        handleSpawnDrone, applyPresetDroneSet,
         sensorSettings, sensorsEnabled, showSensorRanges,
         handleSensorSettingChange,
         voronoiEnabled, voronoiCells, coveragePlans, coverageActive, coverageOverlap,
         detectionLog, appendLog,
+        alerts, appendAlerts, acknowledgeAlert, acknowledgeAllAlerts,
+        alertAudioEnabled, unacknowledgedAlertCount,
         manualInterventionEnabled, fogOfWarEnabled,
+        commsConfig,
         swarmEnabledGlobal,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,
@@ -275,6 +404,4 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
 
     return <MissionContext.Provider value={value}>{children}</MissionContext.Provider>;
 }
-
-
 

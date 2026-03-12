@@ -1,10 +1,13 @@
 import {generateWaterTileData, droneHubFromBounds} from "../../domain/environment/generator";
 import type {MaritimeScenario, Vec2, AnomalyInstance} from "../../domain/types/environment";
 import type {DroneState} from "../../domain/types/drone";
+import type {Alert} from "../../domain/types/alert";
 import type {VoronoiCell} from "./voronoi";
 import type {CoveragePlan} from "../../domain/coverage/planner";
 import {anomalyTypeLabels, anomalyStyles} from "../../config/anomalies";
+import {alertSeverityStyles} from "../../config/alerts";
 import {adjustedGrid, screenFromWorld, type CameraState, type Size} from "./utils";
+import {signalQualityColor, signalBars} from "../../domain/comms/channel";
 
 export const createWaterPattern = (ctx: CanvasRenderingContext2D, scenario: MaritimeScenario) => {
     const tile = generateWaterTileData(scenario.sector.water, scenario.seed);
@@ -547,6 +550,62 @@ export const drawDrones = (
         ctx.font = "11px 'Inter', system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(drone.callsign, screenPos.x, screenPos.y + 20);
+
+        if (drone.comms) {
+            const bars = signalBars(drone.comms.signalQuality);
+            const barColor = signalQualityColor(drone.comms.signalQuality);
+            const barBaseX = screenPos.x + 14;
+            const barBaseY = screenPos.y - 4;
+            const barWidth = 2.5;
+            const barGap = 1.5;
+            const maxBars = 4;
+
+            ctx.save();
+            for (let i = 0; i < maxBars; i++) {
+                const barHeight = 4 + i * 2.5;
+                const bx = barBaseX + i * (barWidth + barGap);
+                const by = barBaseY - barHeight;
+                if (i < bars) {
+                    ctx.fillStyle = barColor;
+                } else {
+                    ctx.fillStyle = "rgba(148,163,184,0.3)";
+                }
+                ctx.fillRect(bx, by, barWidth, barHeight);
+            }
+
+            if (!drone.comms.connected) {
+                ctx.strokeStyle = "#ef4444";
+                ctx.lineWidth = 1.8;
+                ctx.lineCap = "round";
+                const cx = barBaseX + (maxBars * (barWidth + barGap)) / 2;
+                const cy = barBaseY - 7;
+                ctx.beginPath();
+                ctx.moveTo(cx - 5, cy - 5);
+                ctx.lineTo(cx + 5, cy + 5);
+                ctx.moveTo(cx + 5, cy - 5);
+                ctx.lineTo(cx - 5, cy + 5);
+                ctx.stroke();
+            }
+
+            if (drone.comms.offlineBufferSize > 0) {
+                const badgeText = `${drone.comms.offlineBufferSize}`;
+                ctx.font = "bold 8px 'Inter', system-ui, -apple-system, sans-serif";
+                const tw = ctx.measureText(badgeText).width;
+                const bw = tw + 6;
+                const bh = 12;
+                const bx = barBaseX + maxBars * (barWidth + barGap) + 2;
+                const by = barBaseY - 14;
+                ctx.fillStyle = "#f59e0b";
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 3);
+                ctx.fill();
+                ctx.fillStyle = "#0f172a";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(badgeText, bx + bw / 2, by + bh / 2);
+            }
+            ctx.restore();
+        }
     });
 };
 
@@ -602,5 +661,51 @@ export const findDroneAtScreen = (screen: Vec2, items: DroneState[], size: Size,
         }
     });
     return closest;
+};
+
+
+export const drawAlertMarkers = (
+    ctx: CanvasRenderingContext2D,
+    size: Size,
+    camera: CameraState,
+    alerts: Alert[],
+    timestamp: number,
+) => {
+    const unacked = alerts.filter((a) => !a.acknowledged && a.category !== "comm-degradation");
+    if (unacked.length === 0) return;
+
+    ctx.save();
+    unacked.forEach((alert) => {
+        const style = alertSeverityStyles[alert.severity];
+        const screenPos = screenFromWorld(alert.position, size, camera);
+
+        const pulseMs = style.pulseMs;
+        const pulse = pulseMs > 0 ? 0.5 + 0.5 * Math.sin((timestamp * Math.PI * 2) / pulseMs) : 1;
+        const outerRadius = 14 + pulse * 10;
+        const outerAlpha = 0.2 + pulse * 0.35;
+
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, outerRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = style.color;
+        ctx.globalAlpha = outerAlpha;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.globalAlpha = 0.6 + pulse * 0.3;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = style.color;
+        ctx.fill();
+
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = style.color;
+        ctx.font = "bold 9px 'Inter', system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(style.label, screenPos.x, screenPos.y - outerRadius - 4);
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
 };
 

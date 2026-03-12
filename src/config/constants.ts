@@ -30,7 +30,7 @@ export const randomSeed = () => {
 
 export const defaultAnomalyConfigOverride: Partial<AnomalySettings> = {};
 
-export const batteryWarningThresholds = [20, 15, 10];
+export const batteryWarningThresholds = [20, 15, 10, 5];
 export const batteryEmergencyBufferMinutes = 1;
 
 export const defaultSafetyDistanceMeters = 50;

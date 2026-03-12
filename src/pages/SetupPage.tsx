@@ -1,3 +1,4 @@
+import {useEffect, useRef} from "react";
 import {useNavigate} from "react-router-dom";
 import {AppShell} from "../components/layout/AppShell";
 import {PageTransition} from "../components/layout/PageTransition";
@@ -9,13 +10,7 @@ import {anomalyTypeLabels, anomalyTypeOrder} from "../config/anomalies";
 import {droneModels} from "../config/constants";
 import {scenarioPresets} from "../data/scenarios";
 
-/**
- * Setup Page — environment, drone, sensor configuration.
- *
- * Grouped by functional category (Gestalt proximity principle)
- * with expandable sections to reduce visual noise (Miller, 1956
- * - chunking reduces working-memory overload).
- */
+// (Miller, 1956. Chunking reduces working-memory overload).
 export default function SetupPage() {
     const navigate = useNavigate();
     const mission = useMission();
@@ -25,6 +20,7 @@ export default function SetupPage() {
         selectedSpawnPointId, setSelectedSpawnPointId,
         selectedDroneModelId, setSelectedDroneModelId,
         handleSpawnDrone,
+        applyPresetDroneSet,
         drones, setDrones,
         droneSelection,
         selectedDroneIds,
@@ -53,6 +49,14 @@ export default function SetupPage() {
     } = scenarioHook;
 
     const {select, clear} = droneSelection;
+    const didAutoApplyPresetFleet = useRef(false);
+
+    useEffect(() => {
+        if (didAutoApplyPresetFleet.current) return;
+        if (drones.length > 0) return;
+        applyPresetDroneSet(selectedPreset);
+        didAutoApplyPresetFleet.current = true;
+    }, [applyPresetDroneSet, drones.length, selectedPreset]);
 
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -110,7 +114,10 @@ export default function SetupPage() {
                             <Field label="Preset">
                                 <select className="field-input" value={selectedPreset}
                                         aria-label="Environment preset"
-                                        onChange={(e) => applyPreset(e.target.value)}>
+                                        onChange={(e) => {
+                                            applyPreset(e.target.value);
+                                            applyPresetDroneSet(e.target.value);
+                                        }}>
                                     {scenarioPresets.map((preset) => (
                                         <option key={preset.id} value={preset.id}>{preset.label}</option>
                                     ))}

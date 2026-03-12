@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "name": "Degraded Comms",
+  "seed": "COMMS-DEGR-007",
+  "sector": {
+    "id": "COMMS-DEGR-007-8000x8000",
+    "name": "Degraded Comms",
+    "seed": "COMMS-DEGR-007",
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -4000,
+        "y": -4000
+      },
+      "widthMeters": 8000,
+      "heightMeters": 8000
+    },
+    "conditions": {
+      "seaState": 3,
+      "windKts": 14,
+      "visibilityKm": 12,
+      "surfaceTempC": 18,
+      "description": "Moderate swell with comm-link degradation beyond 1.5 km"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.014,
+      "detailScale": 0.070,
+      "baseColor": [
+        14,
+        54,
+        88
+      ],
+      "highlightColor": [
+        34,
+        106,
+        164
+      ],
+      "textureStrength": 0.62
+    }
+  },
+  "anomalies": {
+    "config": {
+      "person-in-water": {
+        "count": 3,
+        "detectionRadiusMeters": 240
+      },
+      "lifeboat": {
+        "count": 1,
+        "detectionRadiusMeters": 400
+      },
+      "debris-field": {
+        "count": 2,
+        "detectionRadiusMeters": 310
+      },
+      "false-positive": {
+        "count": 1,
+        "detectionRadiusMeters": 190
+      }
+    },
+    "items": []
+  },
+  "metadata": {
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "comms",
+      "degraded"
+    ],
+    "notes": "Larger sector forces drones past comms degradation threshold. Recommended: 5 drones with comms degradation enabled."
+  }
+}
+

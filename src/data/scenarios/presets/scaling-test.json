@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "name": "Scaling Test",
+  "seed": "SCALE-099",
+  "sector": {
+    "id": "SCALE-099-15000x15000",
+    "name": "Scaling Test",
+    "seed": "SCALE-099",
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -7500,
+        "y": -7500
+      },
+      "widthMeters": 15000,
+      "heightMeters": 15000
+    },
+    "conditions": {
+      "seaState": 3,
+      "windKts": 12,
+      "visibilityKm": 14,
+      "surfaceTempC": 19,
+      "description": "Large sector for swarm-scale evaluation with 15–20 drones"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.012,
+      "detailScale": 0.060,
+      "baseColor": [
+        16,
+        60,
+        96
+      ],
+      "highlightColor": [
+        38,
+        114,
+        176
+      ],
+      "textureStrength": 0.58
+    }
+  },
+  "anomalies": {
+    "config": {
+      "person-in-water": {
+        "count": 8,
+        "detectionRadiusMeters": 260
+      },
+      "lifeboat": {
+        "count": 4,
+        "detectionRadiusMeters": 440
+      },
+      "debris-field": {
+        "count": 5,
+        "detectionRadiusMeters": 320
+      },
+      "false-positive": {
+        "count": 3,
+        "detectionRadiusMeters": 210
+      }
+    },
+    "items": []
+  },
+  "metadata": {
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "scaling",
+      "large-swarm"
+    ],
+    "notes": "225 km² sector with 20 anomalies. Designed for 15–20 drone swarm validation."
+  }
+}
+

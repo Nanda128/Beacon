@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useRef, useState} from "react";
 import type {MaritimeScenario, Vec2} from "../domain/types/environment";
 import type {AnomalyType} from "../domain/types/environment";
 import type {DroneState} from "../domain/types/drone";
+import type {Alert} from "../domain/types/alert";
 import type {VoronoiCell} from "./canvas/voronoi";
 import type {CoveragePlan} from "../domain/coverage/planner";
 import {anomalyTypeLabels} from "../config/anomalies";
@@ -19,6 +20,7 @@ import {
     createWaterPattern,
     drawAxes,
     drawAnomalies,
+    drawAlertMarkers,
     drawCrosshair,
     drawDrones,
     drawGrid,
@@ -52,6 +54,7 @@ type MaritimeCanvas2DProps = {
     coveragePlans?: CoveragePlan[];
     fogOfWarEnabled?: boolean;
     scanValidationActive?: boolean;
+    alerts?: Alert[];
 };
 
 const MaritimeCanvas2D = ({
@@ -72,6 +75,7 @@ const MaritimeCanvas2D = ({
                               coveragePlans,
                               fogOfWarEnabled,
                               scanValidationActive,
+                              alerts = [],
                           }: MaritimeCanvas2DProps) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -268,7 +272,7 @@ const MaritimeCanvas2D = ({
         draggingDroneIdRef.current = null;
     };
 
-    const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
+    const handleWheel = useCallback((event: WheelEvent) => {
         event.preventDefault();
         const rect = canvasRef.current?.getBoundingClientRect();
         if (!rect) return;
@@ -284,7 +288,14 @@ const MaritimeCanvas2D = ({
             },
             scale: nextScale,
         });
-    };
+    }, [computeScale, size, setCameraState]);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        canvas.addEventListener("wheel", handleWheel, {passive: false});
+        return () => canvas.removeEventListener("wheel", handleWheel);
+    }, [handleWheel]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -362,11 +373,12 @@ const MaritimeCanvas2D = ({
             });
             drawSelectionBox(ctx, size, cameraRef.current, selectionBox);
             drawCrosshair(ctx, size, cameraRef.current);
+            drawAlertMarkers(ctx, size, cameraRef.current, alerts, timestamp);
             ctx.restore();
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts]);
 
     useEffect(() => {
         const handleGlobalPointerDown = (event: PointerEvent) => {
@@ -404,7 +416,6 @@ const MaritimeCanvas2D = ({
                             draggingDroneIdRef.current = null;
                             clearSelectionBox();
                         }}
-                        onWheel={handleWheel}
                     />
                     <div className="overlay-box">
                         {onClearDroneSelection && (
@@ -434,6 +445,19 @@ const MaritimeCanvas2D = ({
                         <div>
                             <strong>Drones</strong> {drones.length} active
                         </div>
+                        {drones.some((d) => d.comms) && (() => {
+                            const withComms = drones.filter((d) => d.comms);
+                            const connected = withComms.filter((d) => d.comms!.connected).length;
+                            const avgSignal = withComms.length > 0
+                                ? Math.round(withComms.reduce((s, d) => s + d.comms!.signalQuality, 0) / withComms.length * 100)
+                                : 0;
+                            return (
+                                <div>
+                                    <strong>Comms</strong> {connected}/{withComms.length} connected · {avgSignal}% avg
+                                    signal
+                                </div>
+                            );
+                        })()}
                         {voronoiCells && voronoiCells.length > 0 && (
                             <div>
                                 <strong>Voronoi</strong> {voronoiCells.length} cells

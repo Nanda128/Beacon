@@ -13,7 +13,35 @@ import {droneModels, batteryWarningThresholds} from "../config/constants";
 import {computeVoronoiCells} from "../components/canvas/voronoi";
 import {planCoveragePaths} from "../domain/coverage/planner";
 import {computeSwarmAdjustments} from "../domain/swarm/behaviour";
+import {
+    createCommDegradationAlert,
+    generateAlertsFromTick,
+    getCommAlertBand,
+    type CommAlertBand
+} from "../domain/alerts/generator";
+import {
+    computeCommsState,
+    shouldDropPacket,
+    enqueueMessage,
+    drainQueue,
+    signalQualityColor,
+    signalQualityLabel
+} from "../domain/comms/channel";
+import {commsThresholds} from "../config/comms";
+import type {QueuedMessage, OfflineBuffer} from "../domain/types/comms";
+import type {Alert} from "../domain/types/alert";
+import {useAlertAudio} from "../hooks/useAlertAudio";
+import AlertPanel from "../components/AlertPanel";
 import type {DetectionLogEntry, AnomalyInstance, Vec2} from "../domain/types/environment";
+import {logError} from "../utils/errorLogging";
+
+const commAlertBandRank: Record<CommAlertBand, number> = {
+    healthy: 0,
+    degraded: 1,
+    poor: 2,
+    critical: 3,
+    lost: 4,
+};
 
 /**
  * Simulation Page: real-time mission execution view.
@@ -40,8 +68,11 @@ export default function SimulationPage() {
         coverageActive, setCoverageActive,
         coverageOverlap, setCoverageOverlap,
         detectionLog, appendLog,
+        alerts, appendAlerts, acknowledgeAlert, acknowledgeAllAlerts,
+        alertAudioEnabled, setAlertAudioEnabled, unacknowledgedAlertCount,
         manualInterventionEnabled, setManualInterventionEnabled,
         fogOfWarEnabled, setFogOfWarEnabled,
+        commsConfig, setCommsConfig,
         swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         spawnPoints, selectedSpawnPointId, setSelectedSpawnPointId,
@@ -59,6 +90,8 @@ export default function SimulationPage() {
     const lastFrameRef = useRef<number | null>(null);
     const scenarioRef = useRef(scenario);
     const dronesRef = useRef(drones);
+    const alertsRef = useRef(alerts);
+    const {playForAlerts} = useAlertAudio(alertAudioEnabled);
 
     useEffect(() => {
         scenarioRef.current = scenario;
@@ -66,13 +99,52 @@ export default function SimulationPage() {
     useEffect(() => {
         dronesRef.current = drones;
     }, [drones]);
+    useEffect(() => {
+        alertsRef.current = alerts;
+    }, [alerts]);
 
     const lastFalseNegativeRef = useRef<Record<string, number>>({});
+
+    const commsQueueRef = useRef<QueuedMessage<DetectionLogEntry>[]>([]);
+    const offlineBufferRef = useRef<Record<string, OfflineBuffer>>({});
+    const prevConnectedRef = useRef<Record<string, boolean>>({});
+    const prevCommAlertBandRef = useRef<Record<string, CommAlertBand>>({});
+    const logEntrySequenceRef = useRef(0);
+    const commsConfigRef = useRef(commsConfig);
+    useEffect(() => {
+        commsConfigRef.current = commsConfig;
+    }, [commsConfig]);
+
+    const createLogEntryId = (prefix: string, now: number, droneId?: string, entityId?: string) => {
+        logEntrySequenceRef.current += 1;
+        return [prefix, droneId ?? "system", entityId ?? "none", now, logEntrySequenceRef.current].join("-");
+    };
+
+    useEffect(() => {
+        if (!commsConfig.enabled) {
+            prevCommAlertBandRef.current = {};
+            return;
+        }
+        const activeDroneIds = new Set(drones.map((d) => d.id));
+        Object.keys(prevCommAlertBandRef.current).forEach((droneId) => {
+            if (!activeDroneIds.has(droneId)) delete prevCommAlertBandRef.current[droneId];
+        });
+    }, [commsConfig.enabled, drones]);
 
     const [drawerOpen, setDrawerOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 960 : true);
     const toggleDrawer = () => setDrawerOpen((prev) => !prev);
 
     const [scanValidationActive, setScanValidationActive] = useState(false);
+    const [activeCoverageDroneIds, setActiveCoverageDroneIds] = useState<string[]>([]);
+
+    const isHubWaypoint = useCallback((point?: Vec2) => point
+        ? Math.hypot(point.x - hub.position.x, point.y - hub.position.y) < 1
+        : false, [hub.position.x, hub.position.y]);
+
+    const queueWithHubReturn = useCallback((queue: Vec2[]) => {
+        const finalWaypoint = queue[queue.length - 1];
+        return isHubWaypoint(finalWaypoint) ? queue : [...queue, hub.position];
+    }, [hub.position, isHubWaypoint]);
 
     const handleRTBImmediate = () => {
         const ids = selectedDroneIds.length > 0 ? selectedDroneIds : drones.map((d) => d.id);
@@ -92,11 +164,7 @@ export default function SimulationPage() {
         setDrones((prev) => prev.map((drone) => {
             if (!ids.includes(drone.id)) return drone;
             const existing = drone.targetPosition ? [drone.targetPosition, ...drone.waypoints] : [...drone.waypoints];
-            const hasHub = existing.some((p) => Math.hypot(p.x - hub.position.x, p.y - hub.position.y) < 1);
-            const queue = hasHub ? existing : [...existing, hub.position];
-            if (queue.length === 0) {
-                return {...drone, targetPosition: hub.position, waypoints: [], status: "returning", lastUpdate: now};
-            }
+            const queue = queueWithHubReturn(existing);
             const [next, ...rest] = queue;
             return {
                 ...drone,
@@ -208,6 +276,11 @@ export default function SimulationPage() {
         return drones.length;
     }, [drones, selectedDroneIds]);
 
+    const totalBufferedScanCount = useMemo(
+        () => drones.reduce((sum, d) => sum + (d.comms?.offlineBufferSize ?? 0), 0),
+        [drones],
+    );
+
     const sweepSpacingMeters = useMemo(() => {
         const raw = sensorSettings.rangeMeters * (1 - coverageOverlap);
         return Math.max(5, Math.round(raw * 100) / 100);
@@ -237,6 +310,7 @@ export default function SimulationPage() {
         setVoronoiCells([]);
         setCoveragePlans([]);
         setCoverageActive(false);
+        setActiveCoverageDroneIds([]);
     };
 
     const computeCoveragePlansFromCells = useCallback((cells: ReturnType<typeof computeVoronoiCells>) => {
@@ -255,6 +329,7 @@ export default function SimulationPage() {
             setMessage("Need at least two Voronoi cells to start coverage.");
             setCoverageActive(false);
             setCoveragePlans([]);
+            setActiveCoverageDroneIds([]);
             return;
         }
         const plans = computeCoveragePlansFromCells(cells);
@@ -262,19 +337,22 @@ export default function SimulationPage() {
             setMessage("No coverage paths could be generated.");
             setCoveragePlans([]);
             setCoverageActive(false);
+            setActiveCoverageDroneIds([]);
             return;
         }
+        const participantIds = plans.map((plan) => plan.droneId);
         setVoronoiEnabled(true);
         setVoronoiCells(cells);
         setCoveragePlans(plans);
         setCoverageActive(true);
+        setActiveCoverageDroneIds(participantIds);
         setDrawerOpen(false);
         setManualInterventionEnabled(false);
         const now = Date.now();
         setDrones((prev) => prev.map((drone) => {
             const plan = plans.find((p) => p.droneId === drone.id);
             if (!plan || plan.waypoints.length === 0) return drone;
-            const [nextTarget, ...rest] = plan.waypoints;
+            const [nextTarget, ...rest] = queueWithHubReturn(plan.waypoints);
             return {
                 ...drone,
                 targetPosition: nextTarget,
@@ -284,294 +362,613 @@ export default function SimulationPage() {
                 coveragePlan: plan
             };
         }));
-        setMessage(`Starting coverage with spacing ${sweepSpacingMeters} m and ${Math.round(coverageOverlap * 100)}% overlap.`);
+        setMessage(`Starting coverage with spacing ${sweepSpacingMeters} m and ${Math.round(coverageOverlap * 100)}% overlap. Drones will return to the hub after their sweeps.`);
     };
+
+    useEffect(() => {
+        if (!coverageActive) return;
+
+        const participants = activeCoverageDroneIds
+            .map((id) => drones.find((drone) => drone.id === id))
+            .filter((drone): drone is typeof drones[number] => Boolean(drone));
+
+        if (participants.length === 0) {
+            setCoverageActive(false);
+            setManualInterventionEnabled(false);
+            setActiveCoverageDroneIds([]);
+            return;
+        }
+
+        const allReturnedToHub = participants.every((drone) =>
+            isHubWaypoint(drone.position) && !drone.targetPosition && drone.waypoints.length === 0,
+        );
+
+        if (!allReturnedToHub) return;
+
+        setCoverageActive(false);
+        setManualInterventionEnabled(false);
+        setActiveCoverageDroneIds([]);
+        setMessage("Coverage complete — all participating drones have returned to the hub.");
+    }, [activeCoverageDroneIds, coverageActive, drones, isHubWaypoint, setCoverageActive, setManualInterventionEnabled, setMessage]);
 
     useEffect(() => {
         let raf: number;
         const step = (timestamp: number) => {
-            if (lastFrameRef.current === null) lastFrameRef.current = timestamp;
-            const dtSeconds = (timestamp - lastFrameRef.current) / 1000;
-            lastFrameRef.current = timestamp;
-            const events: DetectionLogEntry[] = [];
-            const now = Date.now();
-            const bounds = scenario.sector.bounds;
-            const swarmParams = swarmParamsRef.current;
-            const baseDrones = dronesRef.current;
-            const swarmAdjustments = swarmEnabledGlobal ? computeSwarmAdjustments(baseDrones, swarmParams, bounds, dtSeconds) : {};
+            try {
+                if (lastFrameRef.current === null) lastFrameRef.current = timestamp;
+                const dtSeconds = (timestamp - lastFrameRef.current) / 1000;
+                lastFrameRef.current = timestamp;
+                const events: DetectionLogEntry[] = [];
+                const commTransitionAlerts: Alert[] = [];
+                const now = Date.now();
+                const bounds = scenario.sector.bounds;
+                const swarmParams = swarmParamsRef.current;
+                const baseDrones = dronesRef.current;
+                const cc = commsConfigRef.current;
+                const swarmAdjustments = swarmEnabledGlobal ? computeSwarmAdjustments(baseDrones, swarmParams, bounds, dtSeconds) : {};
 
-            setDrones((prev) => prev.map((drone) => {
-                const swarmAdj = (!drone.swarmEnabled && drone.swarmEnabled !== undefined) || drone.avoidanceOverride ? undefined : swarmAdjustments[drone.id];
-                const queue = drone.waypoints ?? [];
-                let target = drone.targetPosition;
-                let remainingQueue = queue;
-                if (!target && remainingQueue.length > 0) {
-                    const [nextTarget, ...rest] = remainingQueue;
-                    target = nextTarget;
-                    remainingQueue = rest;
-                }
-                const activeWaypoint = target ?? remainingQueue[0];
-                const drainMinutes = dtSeconds / 60;
-                const stillFlying = drone.status !== "landed";
-                const batteryMinutesRemaining = Math.max(0, drone.batteryMinutesRemaining - (stillFlying ? drainMinutes : 0));
-                const batteryPct = Math.max(0, Math.min(100, (batteryMinutesRemaining / drone.batteryLifeMinutes) * 100));
-                const returnMinutesRequired = computeReturnMinutes(drone);
-                const emergencyReserveMinutes = computeEmergencyReserve(drone);
-                const needsReturn = stillFlying && batteryMinutesRemaining <= emergencyReserveMinutes;
-                const statusBase = needsReturn ? "returning" : drone.status;
-
-                const warningState = batteryWarningStateRef.current[drone.id] ?? {
-                    thresholds: new Set<number>(),
-                    emergency: false
-                };
-                batteryWarningStateRef.current[drone.id] = warningState;
-
-                if (stillFlying && activeWaypoint) {
-                    batteryWarningThresholds.forEach((threshold) => {
-                        if (!warningState.thresholds.has(threshold) && batteryPct <= threshold) {
-                            warningState.thresholds.add(threshold);
-                            const waypointLabel = `${Math.round(activeWaypoint.x)},${Math.round(activeWaypoint.y)}`;
-                            events.push({
-                                id: `battery-${drone.id}-${threshold}-${now}`,
-                                timestamp: now,
-                                kind: "battery-warning",
-                                droneId: drone.id,
-                                position: drone.position,
-                                batteryPct,
-                                batteryMinutesRemaining,
-                                returnMinutesRequired,
-                                message: `${drone.callsign} battery ${Math.round(batteryPct)}% near waypoint (${waypointLabel}).`
-                            });
+                if (cc.enabled) {
+                    const {delivered, remaining} = drainQueue(commsQueueRef.current, now);
+                    commsQueueRef.current = remaining;
+                    if (delivered.length > 0) {
+                        const deliveredEntries = delivered.map((m) => m.payload);
+                        appendLog(deliveredEntries);
+                        setMessage(deliveredEntries[0].message);
+                        const newAlerts = generateAlertsFromTick({
+                            drones: dronesRef.current,
+                            hub: hub.position,
+                            existingAlerts: alertsRef.current,
+                            newLogEntries: deliveredEntries,
+                            now,
+                        });
+                        if (newAlerts.length > 0) {
+                            appendAlerts(newAlerts);
+                            playForAlerts(newAlerts);
                         }
-                    });
-                }
-
-                if (stillFlying && needsReturn && !warningState.emergency) {
-                    warningState.emergency = true;
-                    events.push({
-                        id: `battery-emergency-${drone.id}-${now}`,
-                        timestamp: now,
-                        kind: "battery-emergency",
-                        droneId: drone.id,
-                        position: drone.position,
-                        batteryPct,
-                        batteryMinutesRemaining,
-                        returnMinutesRequired,
-                        message: `${drone.callsign} battery critical (${batteryMinutesRemaining.toFixed(1)} min left; needs ${emergencyReserveMinutes.toFixed(1)} min to reach hub). Returning to base.`
-                    });
-                }
-
-                if (needsReturn) {
-                    target = hub.position;
-                    remainingQueue = [];
-                }
-
-                if (!target) {
-                    if (remainingQueue !== queue || batteryMinutesRemaining !== drone.batteryMinutesRemaining || batteryPct !== drone.batteryPct || statusBase !== drone.status || returnMinutesRequired !== drone.returnMinutesRequired || emergencyReserveMinutes !== drone.emergencyReserveMinutes) {
-                        return {
-                            ...drone,
-                            waypoints: remainingQueue,
-                            batteryMinutesRemaining,
-                            batteryPct,
-                            status: statusBase === "landed" ? "landed" : statusBase,
-                            returnMinutesRequired,
-                            emergencyReserveMinutes,
-                            lastUpdate: now
-                        };
                     }
-                    return drone;
+
+                    for (const drone of baseDrones) {
+                        const wasConnected = prevConnectedRef.current[drone.id] ?? true;
+                        const currentComms = drone.comms;
+                        const isNowConnected = currentComms ? currentComms.connected : true;
+
+                        if (!wasConnected && isNowConnected) {
+                            const buffer = offlineBufferRef.current[drone.id];
+                            if (buffer && (buffer.events.length > 0 || Object.keys(buffer.anomalyUpdates).length > 0)) {
+                                const anomalyUpdates = buffer.anomalyUpdates;
+                                if (Object.keys(anomalyUpdates).length > 0) {
+                                    const currentScenario = scenarioRef.current;
+                                    updateAnomalies((prevItems) => {
+                                        let items = prevItems ?? currentScenario.anomalies.items;
+                                        let changed = false;
+                                        for (const [anomalyId, update] of Object.entries(anomalyUpdates)) {
+                                            const idx = items.findIndex((a) => a.id === anomalyId);
+                                            if (idx < 0) continue;
+                                            const item = items[idx];
+                                            const newCertainty = Math.min(1, (item.scanCertainty ?? 0) + update.totalCertaintyGain);
+                                            const newDetected = item.detected || update.detected;
+                                            if (newCertainty > (item.scanCertainty ?? 0) + 0.001 || newDetected !== item.detected) {
+                                                if (!changed) {
+                                                    items = [...items];
+                                                    changed = true;
+                                                }
+                                                items[idx] = {
+                                                    ...item,
+                                                    scanCertainty: newCertainty,
+                                                    detected: newDetected
+                                                };
+                                            }
+                                        }
+                                        return items;
+                                    });
+                                }
+
+                                if (buffer.events.length > 0) {
+                                    const latency = drone.comms?.latencyMs ?? cc.baseLatencyMs;
+                                    const reconnectMsg: DetectionLogEntry = {
+                                        id: createLogEntryId("reconnect", now, drone.id),
+                                        timestamp: now,
+                                        kind: "detected",
+                                        droneId: drone.id,
+                                        position: drone.position,
+                                        message: `${drone.callsign} reconnected — delivering ${buffer.events.length} buffered scan result${buffer.events.length === 1 ? "" : "s"}.`,
+                                    };
+                                    const allEvents = [reconnectMsg, ...buffer.events];
+                                    for (const evt of allEvents) {
+                                        if (latency > 5) {
+                                            commsQueueRef.current = enqueueMessage(
+                                                commsQueueRef.current, evt.id, evt, latency, now, drone.id,
+                                            );
+                                        } else {
+                                            appendLog([evt]);
+                                        }
+                                    }
+                                    setMessage(reconnectMsg.message);
+                                    const newAlerts = generateAlertsFromTick({
+                                        drones: dronesRef.current,
+                                        hub: hub.position,
+                                        existingAlerts: alertsRef.current,
+                                        newLogEntries: allEvents,
+                                        now,
+                                    });
+                                    if (newAlerts.length > 0) {
+                                        appendAlerts(newAlerts);
+                                        playForAlerts(newAlerts);
+                                    }
+                                }
+
+                                offlineBufferRef.current[drone.id] = {events: [], anomalyUpdates: {}};
+                            }
+                        }
+
+                        prevConnectedRef.current[drone.id] = isNowConnected;
+                    }
                 }
 
-                const speedMs = drone.speedKts * 0.514444;
-                if (speedMs <= 0) return {
-                    ...drone,
-                    batteryMinutesRemaining,
-                    batteryPct,
-                    status: statusBase,
-                    returnMinutesRequired,
-                    emergencyReserveMinutes
-                };
-                const dx = target.x - drone.position.x;
-                const dy = target.y - drone.position.y;
-                const distance = Math.hypot(dx, dy);
-                const enrouteStatus = needsReturn ? "returning" : "enroute";
-                let headingDeg = distance > 0.001 ? (Math.atan2(dy, dx) * 180) / Math.PI : drone.headingDeg;
-                if (swarmAdj && Number.isFinite(swarmAdj.headingDeltaDeg)) {
-                    headingDeg += swarmAdj.headingDeltaDeg;
-                    if (headingDeg > 180) headingDeg -= 360;
-                    if (headingDeg <= -180) headingDeg += 360;
-                }
-                const dirX = Math.cos((headingDeg * Math.PI) / 180);
-                const dirY = Math.sin((headingDeg * Math.PI) / 180);
-                const maxStep = speedMs * dtSeconds;
-                const nextPos = clampToBounds({
-                    x: drone.position.x + dirX * maxStep,
-                    y: drone.position.y + dirY * maxStep
-                });
-                const reached = maxStep >= distance || Math.hypot(target.x - nextPos.x, target.y - nextPos.y) < 0.1;
-                if (reached) {
-                    if (remainingQueue.length > 0) {
+                setDrones((prev) => prev.map((drone) => {
+                    const bufferSize = offlineBufferRef.current[drone.id]
+                        ? offlineBufferRef.current[drone.id].events.length + Object.keys(offlineBufferRef.current[drone.id].anomalyUpdates).length
+                        : 0;
+                    const comms = cc.enabled
+                        ? computeCommsState(drone.position, hub.position, cc, now, commsQueueRef.current.filter((m) => m.droneId === drone.id).length, bufferSize)
+                        : undefined;
+                    const nextCommAlertBand = cc.enabled
+                        ? getCommAlertBand({...drone, comms}, hub.position)
+                        : "healthy";
+                    const prevCommAlertBand = prevCommAlertBandRef.current[drone.id] ?? "healthy";
+                    if (nextCommAlertBand !== "healthy" && commAlertBandRank[nextCommAlertBand] > commAlertBandRank[prevCommAlertBand]) {
+                        const commAlert = createCommDegradationAlert({...drone, comms}, hub.position, now);
+                        if (commAlert) commTransitionAlerts.push(commAlert);
+                    }
+                    prevCommAlertBandRef.current[drone.id] = nextCommAlertBand;
+
+                    const commsSwarmDisabled = comms && comms.signalQuality < commsThresholds.swarmDisabledQuality;
+                    const swarmAdj = (!drone.swarmEnabled && drone.swarmEnabled !== undefined) || drone.avoidanceOverride || commsSwarmDisabled ? undefined : swarmAdjustments[drone.id];
+                    const queue = drone.waypoints ?? [];
+                    let target = drone.targetPosition;
+                    let remainingQueue = queue;
+                    if (!target && remainingQueue.length > 0) {
                         const [nextTarget, ...rest] = remainingQueue;
+                        target = nextTarget;
+                        remainingQueue = rest;
+                    }
+                    const activeWaypoint = target ?? remainingQueue[0];
+                    const drainMinutes = dtSeconds / 60;
+                    const stillFlying = drone.status !== "landed";
+                    const batteryMinutesRemaining = Math.max(0, drone.batteryMinutesRemaining - (stillFlying ? drainMinutes : 0));
+                    const batteryPct = Math.max(0, Math.min(100, (batteryMinutesRemaining / drone.batteryLifeMinutes) * 100));
+                    const returnMinutesRequired = computeReturnMinutes(drone);
+                    const emergencyReserveMinutes = computeEmergencyReserve(drone);
+                    const needsReturn = stillFlying && batteryMinutesRemaining <= emergencyReserveMinutes;
+                    const statusBase = needsReturn ? "returning" : drone.status;
+
+                    const warningState = batteryWarningStateRef.current[drone.id] ?? {
+                        thresholds: new Set<number>(),
+                        emergency: false
+                    };
+                    batteryWarningStateRef.current[drone.id] = warningState;
+
+                    if (stillFlying && activeWaypoint) {
+                        batteryWarningThresholds.forEach((threshold) => {
+                            if (!warningState.thresholds.has(threshold) && batteryPct <= threshold) {
+                                warningState.thresholds.add(threshold);
+                                const waypointLabel = `${Math.round(activeWaypoint.x)},${Math.round(activeWaypoint.y)}`;
+                                const isCritical = threshold <= 5;
+                                events.push({
+                                    id: createLogEntryId(`battery-${threshold}`, now, drone.id),
+                                    timestamp: now,
+                                    kind: isCritical ? "battery-emergency" : "battery-warning",
+                                    droneId: drone.id,
+                                    position: drone.position,
+                                    batteryPct,
+                                    batteryMinutesRemaining,
+                                    returnMinutesRequired,
+                                    message: isCritical
+                                        ? `${drone.callsign} battery CRITICAL ${Math.round(batteryPct)}% — ${batteryMinutesRemaining.toFixed(1)} min remaining near (${waypointLabel}).`
+                                        : `${drone.callsign} battery ${Math.round(batteryPct)}% near waypoint (${waypointLabel}).`
+                                });
+                            }
+                        });
+                    }
+
+                    if (stillFlying && needsReturn && !warningState.emergency) {
+                        warningState.emergency = true;
+                        events.push({
+                            id: createLogEntryId("battery-emergency", now, drone.id),
+                            timestamp: now,
+                            kind: "battery-emergency",
+                            droneId: drone.id,
+                            position: drone.position,
+                            batteryPct,
+                            batteryMinutesRemaining,
+                            returnMinutesRequired,
+                            message: `${drone.callsign} battery critical (${batteryMinutesRemaining.toFixed(1)} min left; needs ${emergencyReserveMinutes.toFixed(1)} min to reach hub). Returning to base.`
+                        });
+                    }
+
+                    if (needsReturn) {
+                        target = hub.position;
+                        remainingQueue = [];
+                    }
+
+                    if (!target) {
+                        if (remainingQueue !== queue || batteryMinutesRemaining !== drone.batteryMinutesRemaining || batteryPct !== drone.batteryPct || statusBase !== drone.status || returnMinutesRequired !== drone.returnMinutesRequired || emergencyReserveMinutes !== drone.emergencyReserveMinutes || comms !== drone.comms) {
+                            return {
+                                ...drone,
+                                waypoints: remainingQueue,
+                                batteryMinutesRemaining,
+                                batteryPct,
+                                status: statusBase === "landed" ? "landed" : statusBase,
+                                returnMinutesRequired,
+                                emergencyReserveMinutes,
+                                comms,
+                                lastUpdate: now
+                            };
+                        }
+                        return drone;
+                    }
+
+                    const speedMs = drone.speedKts * 0.514444;
+                    if (speedMs <= 0) return {
+                        ...drone,
+                        batteryMinutesRemaining,
+                        batteryPct,
+                        status: statusBase,
+                        returnMinutesRequired,
+                        emergencyReserveMinutes,
+                        comms,
+                    };
+                    const dx = target.x - drone.position.x;
+                    const dy = target.y - drone.position.y;
+                    const distance = Math.hypot(dx, dy);
+                    const enrouteStatus = needsReturn || (isHubWaypoint(target) && remainingQueue.length === 0) ? "returning" : "enroute";
+                    let headingDeg = distance > 0.001 ? (Math.atan2(dy, dx) * 180) / Math.PI : drone.headingDeg;
+                    if (swarmAdj && Number.isFinite(swarmAdj.headingDeltaDeg)) {
+                        headingDeg += swarmAdj.headingDeltaDeg;
+                        if (headingDeg > 180) headingDeg -= 360;
+                        if (headingDeg <= -180) headingDeg += 360;
+                    }
+                    const dirX = Math.cos((headingDeg * Math.PI) / 180);
+                    const dirY = Math.sin((headingDeg * Math.PI) / 180);
+                    const maxStep = speedMs * dtSeconds;
+                    const nextPos = clampToBounds({
+                        x: drone.position.x + dirX * maxStep,
+                        y: drone.position.y + dirY * maxStep
+                    });
+                    const reached = maxStep >= distance || Math.hypot(target.x - nextPos.x, target.y - nextPos.y) < 0.1;
+                    if (reached) {
+                        if (remainingQueue.length > 0) {
+                            const [nextTarget, ...rest] = remainingQueue;
+                            const nextStatus = needsReturn || (isHubWaypoint(nextTarget) && rest.length === 0) ? "returning" : "enroute";
+                            return {
+                                ...drone,
+                                position: clampToBounds(target),
+                                headingDeg,
+                                targetPosition: nextTarget,
+                                waypoints: rest,
+                                status: nextStatus,
+                                batteryMinutesRemaining,
+                                batteryPct,
+                                returnMinutesRequired,
+                                emergencyReserveMinutes,
+                                comms,
+                                lastUpdate: now
+                            };
+                        }
+                        const atHub = isHubWaypoint(target);
                         return {
                             ...drone,
                             position: clampToBounds(target),
                             headingDeg,
-                            targetPosition: nextTarget,
-                            waypoints: rest,
-                            status: enrouteStatus,
+                            targetPosition: undefined,
+                            waypoints: [],
+                            status: atHub ? "landed" : "idle",
                             batteryMinutesRemaining,
                             batteryPct,
                             returnMinutesRequired,
                             emergencyReserveMinutes,
+                            comms,
                             lastUpdate: now
                         };
                     }
-                    const atHub = Math.hypot(target.x - hub.position.x, target.y - hub.position.y) < 1;
                     return {
                         ...drone,
-                        position: clampToBounds(target),
+                        position: nextPos,
                         headingDeg,
-                        targetPosition: undefined,
-                        waypoints: [],
-                        status: atHub ? "landed" : "idle",
+                        status: enrouteStatus,
+                        targetPosition: target,
+                        waypoints: remainingQueue,
                         batteryMinutesRemaining,
                         batteryPct,
                         returnMinutesRequired,
                         emergencyReserveMinutes,
+                        comms,
                         lastUpdate: now
                     };
+                }));
+                if (events.length > 0) {
+                    appendLog(events);
+                    setMessage(events[0].message);
+                    const newAlerts = generateAlertsFromTick({
+                        drones: dronesRef.current,
+                        hub: hub.position,
+                        existingAlerts: alertsRef.current,
+                        newLogEntries: events,
+                        now: Date.now(),
+                    });
+                    if (newAlerts.length > 0) {
+                        appendAlerts(newAlerts);
+                        playForAlerts(newAlerts);
+                    }
                 }
-                return {
-                    ...drone,
-                    position: nextPos,
-                    headingDeg,
-                    status: enrouteStatus,
-                    targetPosition: target,
-                    waypoints: remainingQueue,
-                    batteryMinutesRemaining,
-                    batteryPct,
-                    returnMinutesRequired,
-                    emergencyReserveMinutes,
-                    lastUpdate: now
-                };
-            }));
-            if (events.length > 0) {
-                appendLog(events);
-                setMessage(events[0].message);
+                if (commTransitionAlerts.length > 0) {
+                    appendAlerts(commTransitionAlerts);
+                    playForAlerts(commTransitionAlerts);
+                }
+            } catch (err) {
+                logError(err, {
+                    severity: "fatal",
+                    origin: "simulation.raf-step",
+                    context: {
+                        timestamp,
+                        droneCount: dronesRef.current.length,
+                        anomalyCount: scenarioRef.current.anomalies.items.length,
+                    },
+                });
+            } finally {
+                raf = requestAnimationFrame(step);
             }
-            raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
         return () => {
             cancelAnimationFrame(raf);
             lastFrameRef.current = null;
         };
-    }, [appendLog, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
+    }, [appendLog, appendAlerts, playForAlerts, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
 
     useEffect(() => {
         if (!sensorsEnabled) return;
         const interval = window.setInterval(() => {
-            const now = Date.now();
-            const currentScenario = scenarioRef.current;
-            const currentDrones = dronesRef.current;
-            if (!currentScenario || currentDrones.length === 0) return;
-            let updatedItems = currentScenario.anomalies.items;
-            let changed = false;
-            const events: DetectionLogEntry[] = [];
-            const range = Math.max(10, sensorSettings.rangeMeters);
-            currentDrones.forEach((drone) => {
-                currentScenario.anomalies.items.forEach((anomaly, idx) => {
-                    const dx = anomaly.position.x - drone.position.x;
-                    const dy = anomaly.position.y - drone.position.y;
-                    const distance = Math.hypot(dx, dy);
-                    if (distance > range) return;
-                    const confidence = detectionProbability(distance);
+            try {
+                const now = Date.now();
+                const currentScenario = scenarioRef.current;
+                const currentDrones = dronesRef.current;
+                const cc = commsConfigRef.current;
+                if (!currentScenario || currentDrones.length === 0) return;
+                let updatedItems = currentScenario.anomalies.items;
+                let changed = false;
+                const events: DetectionLogEntry[] = [];
+                const range = Math.max(10, sensorSettings.rangeMeters);
+                currentDrones.forEach((drone) => {
+                    const sensorMultiplier = (cc.enabled && drone.comms && drone.comms.signalQuality < commsThresholds.reducedSensorQuality)
+                        ? 0.5
+                        : 1.0;
 
-                    const prevCertainty = (updatedItems === currentScenario.anomalies.items ? anomaly : updatedItems[idx]).scanCertainty ?? 0;
-                    const certaintyGain = confidence * 0.08;
-                    const newCertainty = Math.min(1, prevCertainty + certaintyGain);
-                    if (newCertainty > prevCertainty + 0.001) {
-                        if (!changed) updatedItems = [...updatedItems];
-                        updatedItems[idx] = {...updatedItems[idx], scanCertainty: newCertainty};
-                        changed = true;
-                    }
+                    const isDisconnected = cc.enabled && drone.comms && !drone.comms.connected;
 
-                    const roll = Math.random();
-                    if (roll <= confidence) {
-                        if (!anomaly.detected) {
+                    currentScenario.anomalies.items.forEach((anomaly, idx) => {
+                        const dx = anomaly.position.x - drone.position.x;
+                        const dy = anomaly.position.y - drone.position.y;
+                        const distance = Math.hypot(dx, dy);
+                        if (distance > range) return;
+                        const rawConfidence = detectionProbability(distance);
+                        const confidence = rawConfidence * sensorMultiplier;
+
+                        if (isDisconnected) {
+                            if (!offlineBufferRef.current[drone.id]) {
+                                offlineBufferRef.current[drone.id] = {events: [], anomalyUpdates: {}};
+                            }
+                            const buffer = offlineBufferRef.current[drone.id];
+
+                            const certaintyGain = confidence * 0.08;
+                            if (certaintyGain > 0.001) {
+                                const existing = buffer.anomalyUpdates[anomaly.id];
+                                if (existing) {
+                                    existing.totalCertaintyGain += certaintyGain;
+                                } else {
+                                    buffer.anomalyUpdates[anomaly.id] = {
+                                        anomalyId: anomaly.id,
+                                        totalCertaintyGain: certaintyGain,
+                                        detected: false,
+                                    };
+                                }
+                            }
+
+                            const roll = Math.random();
+                            if (roll <= confidence && !anomaly.detected) {
+                                const existing = buffer.anomalyUpdates[anomaly.id];
+                                if (existing) {
+                                    existing.detected = true;
+                                } else {
+                                    buffer.anomalyUpdates[anomaly.id] = {
+                                        anomalyId: anomaly.id,
+                                        totalCertaintyGain: 0,
+                                        detected: true,
+                                    };
+                                }
+                                buffer.events.push({
+                                    id: createLogEntryId("hit", now, drone.id, anomaly.id),
+                                    timestamp: now,
+                                    kind: "detected",
+                                    droneId: drone.id,
+                                    anomalyId: anomaly.id,
+                                    anomalyType: anomaly.type,
+                                    position: anomaly.position,
+                                    confidence,
+                                    message: `${drone.callsign} detected ${anomalyTypeLabels[anomaly.type]} (buffered offline)`
+                                });
+                            } else if (roll > confidence && !anomaly.detected) {
+                                const missKey = `${drone.id}-${anomaly.id}`;
+                                const lastMiss = lastFalseNegativeRef.current[missKey] ?? 0;
+                                if (now - lastMiss > sensorSettings.checkIntervalMs * 2) {
+                                    lastFalseNegativeRef.current[missKey] = now;
+                                    buffer.events.push({
+                                        id: createLogEntryId("miss", now, drone.id, anomaly.id),
+                                        timestamp: now,
+                                        kind: "false-negative",
+                                        droneId: drone.id,
+                                        anomalyId: anomaly.id,
+                                        anomalyType: anomaly.type,
+                                        position: anomaly.position,
+                                        confidence,
+                                        message: `${drone.callsign} missed ${anomalyTypeLabels[anomaly.type]} (${Math.round(confidence * 100)}% expected, buffered offline)`
+                                    });
+                                }
+                            }
+                            return;
+                        }
+
+                        const prevCertainty = (updatedItems === currentScenario.anomalies.items ? anomaly : updatedItems[idx]).scanCertainty ?? 0;
+                        const certaintyGain = confidence * 0.08;
+                        const newCertainty = Math.min(1, prevCertainty + certaintyGain);
+                        if (newCertainty > prevCertainty + 0.001) {
                             if (!changed) updatedItems = [...updatedItems];
-                            updatedItems[idx] = {...anomaly, detected: true};
+                            updatedItems[idx] = {...updatedItems[idx], scanCertainty: newCertainty};
+                            changed = true;
+                        }
+
+                        const roll = Math.random();
+                        if (roll <= confidence) {
+                            if (!anomaly.detected) {
+                                if (!changed) updatedItems = [...updatedItems];
+                                updatedItems[idx] = {...anomaly, detected: true};
+                                changed = true;
+                                events.push({
+                                    id: createLogEntryId("hit", now, drone.id, anomaly.id),
+                                    timestamp: now,
+                                    kind: "detected",
+                                    droneId: drone.id,
+                                    anomalyId: anomaly.id,
+                                    anomalyType: anomaly.type,
+                                    position: anomaly.position,
+                                    confidence,
+                                    message: `${drone.callsign} detected ${anomalyTypeLabels[anomaly.type]}`
+                                });
+                            }
+                        } else if (!anomaly.detected) {
+                            const missKey = `${drone.id}-${anomaly.id}`;
+                            const lastMiss = lastFalseNegativeRef.current[missKey] ?? 0;
+                            if (now - lastMiss > sensorSettings.checkIntervalMs * 2) {
+                                lastFalseNegativeRef.current[missKey] = now;
+                                events.push({
+                                    id: createLogEntryId("miss", now, drone.id, anomaly.id),
+                                    timestamp: now,
+                                    kind: "false-negative",
+                                    droneId: drone.id,
+                                    anomalyId: anomaly.id,
+                                    anomalyType: anomaly.type,
+                                    position: anomaly.position,
+                                    confidence,
+                                    message: `${drone.callsign} missed ${anomalyTypeLabels[anomaly.type]} (${Math.round(confidence * 100)}% expected)`
+                                });
+                            }
+                        }
+                    });
+
+                    if (!isDisconnected) {
+                        const falsePositiveChance = sensorSettings.falsePositiveRatePerMinute * (sensorSettings.checkIntervalMs / 60000);
+                        if (Math.random() < falsePositiveChance) {
+                            const angle = Math.random() * Math.PI * 2;
+                            const radius = Math.random() * range * 0.9;
+                            const position = clampToBounds({
+                                x: drone.position.x + Math.cos(angle) * radius,
+                                y: drone.position.y + Math.sin(angle) * radius
+                            });
+                            const id = `fp-${Math.random().toString(36).slice(2, 8)}-${now}`;
+                            const falsePositive: AnomalyInstance = {
+                                id,
+                                type: "false-positive",
+                                position,
+                                detected: true,
+                                detectionRadiusMeters: currentScenario.anomalies.config["false-positive"].detectionRadiusMeters,
+                                note: `False positive from ${drone.callsign}`
+                            };
+                            updatedItems = [...updatedItems, falsePositive];
                             changed = true;
                             events.push({
-                                id: `hit-${anomaly.id}-${now}`,
+                                id: createLogEntryId("fp-log", now, drone.id, id),
                                 timestamp: now,
-                                kind: "detected",
+                                kind: "false-positive",
                                 droneId: drone.id,
-                                anomalyId: anomaly.id,
-                                anomalyType: anomaly.type,
-                                position: anomaly.position,
-                                confidence,
-                                message: `${drone.callsign} detected ${anomalyTypeLabels[anomaly.type]}`
-                            });
-                        }
-                    } else if (!anomaly.detected) {
-                        const missKey = `${drone.id}-${anomaly.id}`;
-                        const lastMiss = lastFalseNegativeRef.current[missKey] ?? 0;
-                        if (now - lastMiss > sensorSettings.checkIntervalMs * 2) {
-                            lastFalseNegativeRef.current[missKey] = now;
-                            events.push({
-                                id: `miss-${anomaly.id}-${now}`,
-                                timestamp: now,
-                                kind: "false-negative",
-                                droneId: drone.id,
-                                anomalyId: anomaly.id,
-                                anomalyType: anomaly.type,
-                                position: anomaly.position,
-                                confidence,
-                                message: `${drone.callsign} missed ${anomalyTypeLabels[anomaly.type]} (${Math.round(confidence * 100)}% expected)`
+                                anomalyId: id,
+                                anomalyType: "false-positive",
+                                position,
+                                message: `${drone.callsign} reported possible contact (false positive)`
                             });
                         }
                     }
                 });
-                const falsePositiveChance = sensorSettings.falsePositiveRatePerMinute * (sensorSettings.checkIntervalMs / 60000);
-                if (Math.random() < falsePositiveChance) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const radius = Math.random() * range * 0.9;
-                    const position = clampToBounds({
-                        x: drone.position.x + Math.cos(angle) * radius,
-                        y: drone.position.y + Math.sin(angle) * radius
+                if (changed) updateAnomalies(() => updatedItems);
+
+                if (cc.enabled && events.length > 0) {
+                    const immediateEvents: DetectionLogEntry[] = [];
+                    events.forEach((evt) => {
+                        const drone = currentDrones.find((d) => d.id === evt.droneId);
+                        const lossRate = drone?.comms?.packetLossRate ?? cc.basePacketLossPct;
+                        const latency = drone?.comms?.latencyMs ?? cc.baseLatencyMs;
+
+                        if (shouldDropPacket(lossRate, Math.random())) {
+                            return;
+                        }
+
+                        if (latency > 5) {
+                            commsQueueRef.current = enqueueMessage(
+                                commsQueueRef.current,
+                                evt.id,
+                                evt,
+                                latency,
+                                now,
+                                evt.droneId ?? "unknown",
+                            );
+                        } else {
+                            immediateEvents.push(evt);
+                        }
                     });
-                    const id = `fp-${Math.random().toString(36).slice(2, 8)}-${now}`;
-                    const falsePositive: AnomalyInstance = {
-                        id,
-                        type: "false-positive",
-                        position,
-                        detected: true,
-                        detectionRadiusMeters: currentScenario.anomalies.config["false-positive"].detectionRadiusMeters,
-                        note: `False positive from ${drone.callsign}`
-                    };
-                    updatedItems = [...updatedItems, falsePositive];
-                    changed = true;
-                    events.push({
-                        id: `fp-log-${id}`,
-                        timestamp: now,
-                        kind: "false-positive",
-                        droneId: drone.id,
-                        anomalyId: id,
-                        anomalyType: "false-positive",
-                        position,
-                        message: `${drone.callsign} reported possible contact (false positive)`
+
+                    if (immediateEvents.length > 0) {
+                        appendLog(immediateEvents);
+                        setMessage(immediateEvents[0].message);
+                        const newAlerts = generateAlertsFromTick({
+                            drones: dronesRef.current,
+                            hub: hub.position,
+                            existingAlerts: alertsRef.current,
+                            newLogEntries: immediateEvents,
+                            now: Date.now(),
+                        });
+                        if (newAlerts.length > 0) {
+                            appendAlerts(newAlerts);
+                            playForAlerts(newAlerts);
+                        }
+                    }
+                } else if (events.length > 0) {
+                    appendLog(events);
+                    setMessage(events[0].message);
+                    const newAlerts = generateAlertsFromTick({
+                        drones: dronesRef.current,
+                        hub: hub.position,
+                        existingAlerts: alertsRef.current,
+                        newLogEntries: events,
+                        now: Date.now(),
                     });
+                    if (newAlerts.length > 0) {
+                        appendAlerts(newAlerts);
+                        playForAlerts(newAlerts);
+                    }
                 }
-            });
-            if (changed) updateAnomalies(() => updatedItems);
-            if (events.length > 0) {
-                appendLog(events);
-                setMessage(events[0].message);
+            } catch (err) {
+                logError(err, {
+                    severity: "fatal",
+                    origin: "simulation.sensor-tick",
+                    context: {
+                        checkIntervalMs: sensorSettings.checkIntervalMs,
+                        droneCount: dronesRef.current.length,
+                        anomalyCount: scenarioRef.current.anomalies.items.length,
+                    },
+                });
             }
         }, sensorSettings.checkIntervalMs);
         return () => window.clearInterval(interval);
-    }, [appendLog, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
+    }, [appendLog, appendAlerts, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
 
     const handleBackToSetup = () => {
         setPhase("setup");
@@ -588,6 +985,30 @@ export default function SimulationPage() {
                             <span><strong>Drones</strong> {drones.length}</span>
                             <span><strong>Detected</strong> {scenario.anomalies.items.filter((a) => a.detected).length}/{scenario.anomalies.items.length}</span>
                             <span><strong>Sea state</strong> {sectorMeta.conditions.seaState}</span>
+                            {commsConfig.enabled && drones.some((d) => d.comms) && (() => {
+                                const connected = drones.filter((d) => d.comms?.connected).length;
+                                const total = drones.filter((d) => d.comms).length;
+                                const avgQ = total > 0 ? drones.filter((d) => d.comms).reduce((s, d) => s + d.comms!.signalQuality, 0) / total : 1;
+                                const color = signalQualityColor(avgQ);
+                                return (
+                                    <span style={{display: "inline-flex", alignItems: "center", gap: 4}}>
+                                        <span style={{
+                                            width: 8,
+                                            height: 8,
+                                            borderRadius: "50%",
+                                            background: color,
+                                            display: "inline-block"
+                                        }}/>
+                                        <strong>Comms</strong> {connected}/{total}
+                                    </span>
+                                );
+                            })()}
+                            {unacknowledgedAlertCount > 0 && (
+                                <span className="status-alert-badge"
+                                      aria-label={`${unacknowledgedAlertCount} unacknowledged alerts`}>
+                                    <strong>Alerts</strong> {unacknowledgedAlertCount}
+                                </span>
+                            )}
                         </div>
                     </nav>
 
@@ -610,315 +1031,536 @@ export default function SimulationPage() {
                             coveragePlans={coveragePlans}
                             fogOfWarEnabled={fogOfWarEnabled}
                             scanValidationActive={scanValidationActive}
+                            alerts={alerts}
                         />
 
-                        <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading">
-                            <div className="badge" style={{marginBottom: 8}} id="detection-log-heading">
-                                <span className="badge-dot" aria-hidden="true"/> Detection Log
-                            </div>
-                            <div className="log-meta">Newest first · max {sensorSettings.logLimit}</div>
-                            <div className="log-scroll" role="log" aria-live="polite" aria-relevant="additions">
-                                {detectionLog.length === 0 && <div className="log-empty">No detections yet.</div>}
-                                {detectionLog.map((entry) => (
-                                    <div key={entry.id}
-                                         className={`callout callout-log ${entry.kind === "battery-emergency" ? "danger" : entry.kind === "battery-warning" ? "warning" : ""}`}>
-                                        <div className="log-entry-msg">{entry.message}</div>
-                                        <div className="log-entry-meta">
-                                            {new Date(entry.timestamp).toLocaleTimeString()} · {entry.kind}
-                                            {entry.droneId ? ` · ${entry.droneId}` : ""}
-                                            {entry.anomalyType ? ` · ${entry.anomalyType}` : ""}
+                        <div className="sim-side-panels">
+                            <AlertPanel
+                                alerts={alerts}
+                                onAcknowledge={acknowledgeAlert}
+                                onAcknowledgeAll={acknowledgeAllAlerts}
+                            />
+
+                            <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading">
+                                <div className="badge" style={{marginBottom: 8}} id="detection-log-heading">
+                                    <span className="badge-dot" aria-hidden="true"/> Detection Log
+                                </div>
+                                <div className="log-meta">Newest first · max {sensorSettings.logLimit}</div>
+                                <div className="log-scroll" role="log" aria-live="polite" aria-relevant="additions">
+                                    {detectionLog.length === 0 && <div className="log-empty">No detections yet.</div>}
+                                    {detectionLog.map((entry) => (
+                                        <div key={entry.id}
+                                             className={`callout callout-log ${entry.kind === "battery-emergency" ? "danger" : entry.kind === "battery-warning" ? "warning" : ""}`}>
+                                            <div className="log-entry-msg">{entry.message}</div>
+                                            <div className="log-entry-meta">
+                                                {new Date(entry.timestamp).toLocaleTimeString()} · {entry.kind}
+                                                {entry.droneId ? ` · ${entry.droneId}` : ""}
+                                                {entry.anomalyType ? ` · ${entry.anomalyType}` : ""}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 {createPortal(
-                <div className={`scenario-drawer ${drawerOpen ? "open" : "closed"}`}>
-                    <div className="drawer-surface">
-                        <button className="drawer-handle" onClick={toggleDrawer} aria-expanded={drawerOpen}
-                                aria-controls="sim-drawer-body">
-                            <span style={{fontWeight: 700}}>Mission Controls</span>
-                            <span className="drawer-hint">{drawerOpen ? "Hide" : "Show"}</span>
-                            <span className="drawer-chevron" aria-hidden="true">{drawerOpen ? "▼" : "▲"}</span>
-                        </button>
-                        <div className="drawer-body" id="sim-drawer-body">
-                            <div className="panel-card drawer-panel">
-                                <div className="drawer-commands">
-                                    <Badge style={{marginBottom: 8}}>Drone Commands</Badge>
+                    <div className={`scenario-drawer ${drawerOpen ? "open" : "closed"}`}>
+                        <div className="drawer-surface">
+                            <button className="drawer-handle" onClick={toggleDrawer} aria-expanded={drawerOpen}
+                                    aria-controls="sim-drawer-body">
+                                <span style={{fontWeight: 700}}>Mission Controls</span>
+                                <span className="drawer-hint">{drawerOpen ? "Hide" : "Show"}</span>
+                                <span className="drawer-chevron" aria-hidden="true">{drawerOpen ? "▼" : "▲"}</span>
+                            </button>
+                            <div className="drawer-body" id="sim-drawer-body">
+                                <div className="panel-card drawer-panel">
+                                    <div className="drawer-commands">
+                                        <Badge style={{marginBottom: 8}}>Drone Commands</Badge>
+                                        <ControlGrid>
+                                            <Field label="Spawn point">
+                                                <select className="field-input" value={selectedSpawnPointId}
+                                                        onChange={(e) => setSelectedSpawnPointId(e.target.value)}>
+                                                    {spawnPoints.map((point) => (
+                                                        <option key={point.id}
+                                                                value={point.id}>{point.label}</option>))}
+                                                </select>
+                                            </Field>
+                                            <Field label="Drone model">
+                                                <select className="field-input" value={selectedDroneModelId}
+                                                        onChange={(e) => setSelectedDroneModelId(e.target.value)}>
+                                                    {droneModels.map((model) => (
+                                                        <option key={model.id}
+                                                                value={model.id}>{model.label}</option>))}
+                                                </select>
+                                            </Field>
+                                            <Field label=" " className="field" as="div">
+                                                <div style={{
+                                                    display: "flex",
+                                                    gap: 8,
+                                                    alignItems: "flex-end",
+                                                    flexWrap: "wrap"
+                                                }}>
+                                                    <button className="btn" onClick={handleSpawnDrone}>Spawn Drone
+                                                    </button>
+                                                    <button className="btn ghost"
+                                                            onClick={() => select(drones.map((d) => d.id))}>Select All
+                                                    </button>
+                                                    <button className="btn ghost" onClick={clear}>Deselect All</button>
+                                                    <button
+                                                        className="btn ghost btn-delete"
+                                                        onClick={handleDeleteSelected}
+                                                        disabled={selectedDroneIds.length === 0}
+                                                        aria-label="Delete selected drones"
+                                                    >
+                                                        Delete Selected
+                                                    </button>
+                                                </div>
+                                                <div className="field-hint" style={{marginTop: 6}}>
+                                                    Use checkboxes to multi-select · Click pill to select one ·
+                                                    Press <kbd
+                                                    className="kbd">Delete</kbd> to remove selected
+                                                </div>
+                                            </Field>
+                                            <Field label="Return to Base">
+                                                <div style={{
+                                                    display: "flex",
+                                                    gap: 8,
+                                                    flexWrap: "wrap",
+                                                    alignItems: "center"
+                                                }}>
+                                                    <button className="btn" onClick={handleRTBImmediate}>RTB Immediately
+                                                    </button>
+                                                    <button className="btn ghost" onClick={handleRTBAfterCompletion}>RTB
+                                                        After Completion
+                                                    </button>
+                                                    <span
+                                                        className="field-hint">Applies to {selectedDroneIds.length > 0 ? "selected" : "all"} drones.</span>
+                                                </div>
+                                            </Field>
+                                        </ControlGrid>
+                                    </div>
+
+                                    {drones.length > 0 && (
+                                        <div className="drawer-drone-list-section">
+                                            <Badge style={{marginBottom: 6}}>Active Drones ({drones.length})</Badge>
+                                            <div className="drawer-drone-scroll" role="list" aria-label="Active drones">
+                                                {drones.map((drone) => {
+                                                    const isSelected = selectedDroneIds.includes(drone.id);
+                                                    return (
+                                                        <div key={drone.id} className="drone-pill-row" role="listitem">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="drone-select-checkbox"
+                                                                checked={isSelected}
+                                                                onChange={(e) => handleToggleDroneCheckbox(drone.id, e.target.checked)}
+                                                                aria-label={`Select ${drone.callsign}`}
+                                                                title={`Toggle selection for ${drone.callsign}`}
+                                                            />
+                                                            <button
+                                                                className={`drone-pill${isSelected ? " active" : ""}`}
+                                                                onClick={(event) => handleSelectDroneFromList(drone.id, event)}
+                                                                aria-pressed={isSelected}
+                                                                style={{flex: 1}}
+                                                            >
+                                                                <span>{drone.callsign}</span>
+                                                                <span className="drone-meta">{drone.status}</span>
+                                                                <span
+                                                                    className="drone-meta">· {Math.round(drone.batteryPct)}%</span>
+                                                                <span
+                                                                    className="drone-meta">· {drone.batteryMinutesRemaining.toFixed(1)} min left</span>
+                                                                <span
+                                                                    className="drone-meta">· Hub {drone.returnMinutesRequired.toFixed(1)} min</span>
+                                                                <span
+                                                                    className="drone-meta">· Emergency at {drone.emergencyReserveMinutes.toFixed(1)} min</span>
+                                                                {drone.comms && (
+                                                                    <span className="drone-meta"
+                                                                          title={`Signal: ${signalQualityLabel(drone.comms.signalQuality)} · Latency: ${Math.round(drone.comms.latencyMs)} ms · Loss: ${(drone.comms.packetLossRate * 100).toFixed(1)}% · ${(drone.comms.distanceFromHub / 1000).toFixed(1)} km${drone.comms.offlineBufferSize > 0 ? ` · ${drone.comms.offlineBufferSize} buffered` : ""}`}
+                                                                          style={{
+                                                                              display: "inline-flex",
+                                                                              alignItems: "center",
+                                                                              gap: 3
+                                                                          }}>
+                                                                    · <span style={{
+                                                                        width: 7,
+                                                                        height: 7,
+                                                                        borderRadius: "50%",
+                                                                        background: signalQualityColor(drone.comms.signalQuality),
+                                                                        display: "inline-block",
+                                                                        flexShrink: 0,
+                                                                    }}/>
+                                                                        {signalQualityLabel(drone.comms.signalQuality)}
+                                                                        {!drone.comms.connected && " (LOST)"}
+                                                                        {drone.comms.offlineBufferSize > 0 && (
+                                                                            <span style={{
+                                                                                color: "#f59e0b",
+                                                                                fontWeight: 600
+                                                                            }}>
+                                                                            {" "}· {drone.comms.offlineBufferSize} buffered
+                                                                        </span>
+                                                                        )}
+                                                                </span>
+                                                                )}
+                                                            </button>
+                                                            <div style={{
+                                                                display: "flex",
+                                                                flexDirection: "column",
+                                                                gap: 4,
+                                                                alignItems: "flex-end"
+                                                            }}>
+                                                                <label className="speed-label">
+                                                                    <span className="drone-meta">Speed</span>
+                                                                    <input type="number" min={0} step={1}
+                                                                           value={drone.speedKts}
+                                                                           aria-label={`Speed for ${drone.callsign}`}
+                                                                           onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
+                                                                           style={{width: 70}}/>
+                                                                    <span className="drone-meta">kts</span>
+                                                                </label>
+                                                                <label style={{
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    gap: 4,
+                                                                    fontSize: 11
+                                                                }}>
+                                                                    <input type="checkbox"
+                                                                           checked={!!drone.avoidanceOverride}
+                                                                           onChange={(e) => {
+                                                                               const checked = e.target.checked;
+                                                                               setDrones((prev) => prev.map((d) => d.id === drone.id ? {
+                                                                                   ...d,
+                                                                                   avoidanceOverride: checked
+                                                                               } : d));
+                                                                           }}/>
+                                                                    <span
+                                                                        className="drone-meta">Override avoidance</span>
+                                                                </label>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <Badge style={{marginTop: 16, marginBottom: 8}}>Sensors</Badge>
                                     <ControlGrid>
-                                        <Field label="Spawn point">
-                                            <select className="field-input" value={selectedSpawnPointId}
-                                                    onChange={(e) => setSelectedSpawnPointId(e.target.value)}>
-                                                {spawnPoints.map((point) => (
-                                                    <option key={point.id} value={point.id}>{point.label}</option>))}
-                                            </select>
+                                        <Field label="Sensors enabled">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input type="checkbox" checked={sensorsEnabled}
+                                                       onChange={(e) => setSensorsEnabled(e.target.checked)}/>
+                                                <span>Run detection loop</span>
+                                            </label>
                                         </Field>
-                                        <Field label="Drone model">
-                                            <select className="field-input" value={selectedDroneModelId}
-                                                    onChange={(e) => setSelectedDroneModelId(e.target.value)}>
-                                                {droneModels.map((model) => (
-                                                    <option key={model.id} value={model.id}>{model.label}</option>))}
-                                            </select>
+                                        <Field label="Show ranges">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input type="checkbox" checked={showSensorRanges}
+                                                       onChange={(e) => setShowSensorRanges(e.target.checked)}/>
+                                                <span>Draw sensor radius</span>
+                                            </label>
                                         </Field>
-                                        <Field label=" " className="field" as="div">
-                                            <div style={{
-                                                display: "flex",
-                                                gap: 8,
-                                                alignItems: "flex-end",
-                                                flexWrap: "wrap"
-                                            }}>
-                                                <button className="btn" onClick={handleSpawnDrone}>Spawn Drone</button>
-                                                <button className="btn ghost"
-                                                        onClick={() => select(drones.map((d) => d.id))}>Select All
-                                                </button>
-                                                <button className="btn ghost" onClick={clear}>Deselect All</button>
-                                                <button
-                                                    className="btn ghost btn-delete"
-                                                    onClick={handleDeleteSelected}
-                                                    disabled={selectedDroneIds.length === 0}
-                                                    aria-label="Delete selected drones"
-                                                >
-                                                    Delete Selected
-                                                </button>
-                                            </div>
-                                            <div className="field-hint" style={{marginTop: 6}}>
-                                                Use checkboxes to multi-select · Click pill to select one · Press <kbd
-                                                className="kbd">Delete</kbd> to remove selected
+                                        <Field label="Alert audio">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input type="checkbox" checked={alertAudioEnabled}
+                                                       onChange={(e) => setAlertAudioEnabled(e.target.checked)}/>
+                                                <span>Play EICAS tones</span>
+                                            </label>
+                                            <div className="field-hint" style={{marginTop: 4}}>
+                                                Critical = triple beep · High = double beep
                                             </div>
                                         </Field>
-                                        <Field label="Return to Base">
+                                    </ControlGrid>
+
+                                    <Badge style={{marginTop: 16, marginBottom: 8}}>Coverage</Badge>
+                                    <ControlGrid>
+                                        <Field label="Voronoi coverage">
                                             <div style={{
                                                 display: "flex",
                                                 gap: 8,
                                                 flexWrap: "wrap",
                                                 alignItems: "center"
                                             }}>
-                                                <button className="btn" onClick={handleRTBImmediate}>RTB Immediately
-                                                </button>
-                                                <button className="btn ghost" onClick={handleRTBAfterCompletion}>RTB
-                                                    After Completion
+                                                <button className="btn" onClick={handleRunVoronoi}>Run Coverage</button>
+                                                <button className="btn ghost" onClick={handleClearVoronoi}
+                                                        disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear
+                                                    Overlay
                                                 </button>
                                                 <span
-                                                    className="field-hint">Applies to {selectedDroneIds.length > 0 ? "selected" : "all"} drones.</span>
+                                                    className="field-hint">Uses {coverageSourceCount} drone{coverageSourceCount === 1 ? "" : "s"} ({selectedDroneIds.length > 0 ? "selected" : "all"}).</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Sweep overlap (%)">
+                                            <div style={{
+                                                display: "flex",
+                                                gap: 8,
+                                                alignItems: "center",
+                                                flexWrap: "wrap"
+                                            }}>
+                                                <input className="field-input" type="number" min={10} max={20} step={1}
+                                                       value={Math.round(coverageOverlap * 100)}
+                                                       onChange={(e) => setCoverageOverlap(Math.min(0.2, Math.max(0.1, Number(e.target.value) / 100)))}
+                                                       style={{width: 90}}/>
+                                                <span className="field-hint">Spacing {sweepSpacingMeters} m</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Lawnmower">
+                                            <div style={{
+                                                display: "flex",
+                                                gap: 8,
+                                                flexWrap: "wrap",
+                                                alignItems: "center"
+                                            }}>
+                                                <button className="btn" onClick={handleStartCoverage}>Start Coverage
+                                                </button>
+                                                <span className="field-hint">Generates boustrophedon sweeps.</span>
                                             </div>
                                         </Field>
                                     </ControlGrid>
-                                </div>
 
-                                {drones.length > 0 && (
-                                    <div className="drawer-drone-list-section">
-                                        <Badge style={{marginBottom: 6}}>Active Drones ({drones.length})</Badge>
-                                        <div className="drawer-drone-scroll" role="list" aria-label="Active drones">
-                                            {drones.map((drone) => {
-                                                const isSelected = selectedDroneIds.includes(drone.id);
+                                    <Badge style={{marginTop: 16, marginBottom: 8}}>Autonomy</Badge>
+                                    <ControlGrid>
+                                        <Field label="Manual intervention">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={manualInterventionEnabled}
+                                                    onChange={(e) => setManualInterventionEnabled(e.target.checked)}
+                                                    disabled={!coverageActive}
+                                                />
+                                                <span>Allow drone repositioning &amp; waypoints</span>
+                                            </label>
+                                            <div className="field-hint" style={{marginTop: 4}}>
+                                                {coverageActive
+                                                    ? manualInterventionEnabled
+                                                        ? "Manual control enabled — select drones and click to assign waypoints."
+                                                        : "Drones are following autonomous coverage paths."
+                                                    : "Start coverage first to toggle manual intervention."}
+                                            </div>
+                                        </Field>
+                                        <Field label="Fog of war">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={fogOfWarEnabled}
+                                                    onChange={(e) => {
+                                                        setFogOfWarEnabled(e.target.checked);
+                                                        if (!e.target.checked) setScanValidationActive(false);
+                                                    }}
+                                                />
+                                                <span>Hide anomalies until scanned</span>
+                                            </label>
+                                            <div className="field-hint" style={{marginTop: 4}}>
+                                                Anomalies are revealed progressively as drones scan nearby, with visual
+                                                certainty levels.
+                                            </div>
+                                        </Field>
+                                        <Field label="Scan validation">
+                                            <div style={{
+                                                display: "flex",
+                                                gap: 8,
+                                                flexWrap: "wrap",
+                                                alignItems: "center"
+                                            }}>
+                                                <button
+                                                    className={`btn${scanValidationActive ? " ghost" : ""}`}
+                                                    onClick={() => setScanValidationActive((prev) => !prev)}
+                                                    disabled={!fogOfWarEnabled}
+                                                >
+                                                    {scanValidationActive ? "Hide Validation" : "Validate Scans"}
+                                                </button>
+                                                {!fogOfWarEnabled && (
+                                                    <span className="field-hint">Enable Fog of War first.</span>
+                                                )}
+                                            </div>
+                                            {scanValidationActive && (() => {
+                                                const realItems = scenario.anomalies.items.filter((a) => a.type !== "false-positive");
+                                                const detectedCount = realItems.filter((a) => a.detected).length;
+                                                const missedCount = realItems.length - detectedCount;
+                                                const allFound = missedCount === 0;
                                                 return (
-                                                    <div key={drone.id} className="drone-pill-row" role="listitem">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="drone-select-checkbox"
-                                                            checked={isSelected}
-                                                            onChange={(e) => handleToggleDroneCheckbox(drone.id, e.target.checked)}
-                                                            aria-label={`Select ${drone.callsign}`}
-                                                            title={`Toggle selection for ${drone.callsign}`}
-                                                        />
-                                                        <button
-                                                            className={`drone-pill${isSelected ? " active" : ""}`}
-                                                            onClick={(event) => handleSelectDroneFromList(drone.id, event)}
-                                                            aria-pressed={isSelected}
-                                                            style={{flex: 1}}
-                                                        >
-                                                            <span>{drone.callsign}</span>
-                                                            <span className="drone-meta">{drone.status}</span>
-                                                            <span
-                                                                className="drone-meta">· {Math.round(drone.batteryPct)}%</span>
-                                                            <span
-                                                                className="drone-meta">· {drone.batteryMinutesRemaining.toFixed(1)} min left</span>
-                                                            <span
-                                                                className="drone-meta">· Hub {drone.returnMinutesRequired.toFixed(1)} min</span>
-                                                            <span
-                                                                className="drone-meta">· Emergency at {drone.emergencyReserveMinutes.toFixed(1)} min</span>
-                                                        </button>
-                                                        <div style={{
-                                                            display: "flex",
-                                                            flexDirection: "column",
-                                                            gap: 4,
-                                                            alignItems: "flex-end"
-                                                        }}>
-                                                            <label className="speed-label">
-                                                                <span className="drone-meta">Speed</span>
-                                                                <input type="number" min={0} step={1}
-                                                                       value={drone.speedKts}
-                                                                       aria-label={`Speed for ${drone.callsign}`}
-                                                                       onChange={(e) => handleDroneSpeedChange(drone.id, Math.max(0, Number(e.target.value)))}
-                                                                       style={{width: 70}}/>
-                                                                <span className="drone-meta">kts</span>
-                                                            </label>
-                                                            <label style={{
-                                                                display: "flex",
-                                                                alignItems: "center",
-                                                                gap: 4,
-                                                                fontSize: 11
-                                                            }}>
-                                                                <input type="checkbox"
-                                                                       checked={!!drone.avoidanceOverride}
-                                                                       onChange={(e) => {
-                                                                           const checked = e.target.checked;
-                                                                           setDrones((prev) => prev.map((d) => d.id === drone.id ? {
-                                                                               ...d,
-                                                                               avoidanceOverride: checked
-                                                                           } : d));
-                                                                       }}/>
-                                                                <span className="drone-meta">Override avoidance</span>
-                                                            </label>
-                                                        </div>
+                                                    <div
+                                                        className={`callout ${allFound ? "success" : "danger"}`}
+                                                        role="status"
+                                                        aria-live="polite"
+                                                        style={{marginTop: 8}}
+                                                    >
+                                                        <strong>{detectedCount}/{realItems.length}</strong> anomalies
+                                                        detected
+                                                        {missedCount > 0
+                                                            ? ` · ${missedCount} missed — highlighted on the map with pulsing red markers.`
+                                                            : " — all anomalies found! ✓"}
                                                     </div>
                                                 );
-                                            })}
-                                        </div>
-                                    </div>
-                                )}
+                                            })()}
+                                        </Field>
+                                    </ControlGrid>
 
-                                <Badge style={{marginTop: 16, marginBottom: 8}}>Sensors</Badge>
-                                <ControlGrid>
-                                    <Field label="Sensors enabled">
-                                        <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                            <input type="checkbox" checked={sensorsEnabled}
-                                                   onChange={(e) => setSensorsEnabled(e.target.checked)}/>
-                                            <span>Run detection loop</span>
-                                        </label>
-                                    </Field>
-                                    <Field label="Show ranges">
-                                        <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                            <input type="checkbox" checked={showSensorRanges}
-                                                   onChange={(e) => setShowSensorRanges(e.target.checked)}/>
-                                            <span>Draw sensor radius</span>
-                                        </label>
-                                    </Field>
-                                </ControlGrid>
-
-                                <Badge style={{marginTop: 16, marginBottom: 8}}>Coverage</Badge>
-                                <ControlGrid>
-                                    <Field label="Voronoi coverage">
-                                        <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                            <button className="btn" onClick={handleRunVoronoi}>Run Coverage</button>
-                                            <button className="btn ghost" onClick={handleClearVoronoi}
-                                                    disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear
-                                                Overlay
-                                            </button>
-                                            <span
-                                                className="field-hint">Uses {coverageSourceCount} drone{coverageSourceCount === 1 ? "" : "s"} ({selectedDroneIds.length > 0 ? "selected" : "all"}).</span>
-                                        </div>
-                                    </Field>
-                                    <Field label="Sweep overlap (%)">
-                                        <div style={{display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap"}}>
-                                            <input className="field-input" type="number" min={10} max={20} step={1}
-                                                   value={Math.round(coverageOverlap * 100)}
-                                                   onChange={(e) => setCoverageOverlap(Math.min(0.2, Math.max(0.1, Number(e.target.value) / 100)))}
-                                                   style={{width: 90}}/>
-                                            <span className="field-hint">Spacing {sweepSpacingMeters} m</span>
-                                        </div>
-                                    </Field>
-                                    <Field label="Lawnmower">
-                                        <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                            <button className="btn" onClick={handleStartCoverage}>Start Coverage
-                                            </button>
-                                            <span className="field-hint">Generates boustrophedon sweeps.</span>
-                                        </div>
-                                    </Field>
-                                </ControlGrid>
-
-                                <Badge style={{marginTop: 16, marginBottom: 8}}>Autonomy</Badge>
-                                <ControlGrid>
-                                    <Field label="Manual intervention">
-                                        <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                            <input
-                                                type="checkbox"
-                                                checked={manualInterventionEnabled}
-                                                onChange={(e) => setManualInterventionEnabled(e.target.checked)}
-                                                disabled={!coverageActive}
-                                            />
-                                            <span>Allow drone repositioning &amp; waypoints</span>
-                                        </label>
-                                        <div className="field-hint" style={{marginTop: 4}}>
-                                            {coverageActive
-                                                ? manualInterventionEnabled
-                                                    ? "Manual control enabled — select drones and click to assign waypoints."
-                                                    : "Drones are following autonomous coverage paths."
-                                                : "Start coverage first to toggle manual intervention."}
-                                        </div>
-                                    </Field>
-                                    <Field label="Fog of war">
-                                        <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                            <input
-                                                type="checkbox"
-                                                checked={fogOfWarEnabled}
-                                                onChange={(e) => {
-                                                    setFogOfWarEnabled(e.target.checked);
-                                                    if (!e.target.checked) setScanValidationActive(false);
-                                                }}
-                                            />
-                                            <span>Hide anomalies until scanned</span>
-                                        </label>
-                                        <div className="field-hint" style={{marginTop: 4}}>
-                                            Anomalies are revealed progressively as drones scan nearby, with visual
-                                            certainty levels.
-                                        </div>
-                                    </Field>
-                                    <Field label="Scan validation">
-                                        <div style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
-                                            <button
-                                                className={`btn${scanValidationActive ? " ghost" : ""}`}
-                                                onClick={() => setScanValidationActive((prev) => !prev)}
-                                                disabled={!fogOfWarEnabled}
-                                            >
-                                                {scanValidationActive ? "Hide Validation" : "Validate Scans"}
-                                            </button>
-                                            {!fogOfWarEnabled && (
-                                                <span className="field-hint">Enable Fog of War first.</span>
+                                    <Badge style={{marginTop: 16, marginBottom: 8}}>Communications</Badge>
+                                    <ControlGrid>
+                                        <Field label="Comms degradation">
+                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        enabled: e.target.checked
+                                                    }))}
+                                                />
+                                                <span>Simulate comm degradation</span>
+                                            </label>
+                                            <div className="field-hint" style={{marginTop: 4}}>
+                                                Models distance-based signal decay, packet loss, and latency per
+                                                Zulkifley et al. (2021).
+                                            </div>
+                                        </Field>
+                                        <Field label="Base latency (ms)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={0} max={200} step={1}
+                                                    value={commsConfig.baseLatencyMs}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        baseLatencyMs: Math.max(0, Number(e.target.value))
+                                                    }))}
+                                                    style={{width: 80}}
+                                                />
+                                                <span className="field-hint">C2 spec: &lt; 50 ms</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Max latency (ms)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={0} max={500} step={1}
+                                                    value={commsConfig.maxLatencyMs}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        maxLatencyMs: Math.max(0, Number(e.target.value))
+                                                    }))}
+                                                    style={{width: 80}}
+                                                />
+                                                <span className="field-hint">Measured: up to 94 ms</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Packet loss (%)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={0} max={50} step={0.1}
+                                                    value={Math.round(commsConfig.maxPacketLossPct * 1000) / 10}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        maxPacketLossPct: Math.min(0.5, Math.max(0, Number(e.target.value) / 100))
+                                                    }))}
+                                                    style={{width: 80}}
+                                                />
+                                                <span className="field-hint">Max at full degradation</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Degradation start (m)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={100} max={10000}
+                                                    step={100}
+                                                    value={commsConfig.degradationStartMeters}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        degradationStartMeters: Math.max(100, Number(e.target.value))
+                                                    }))}
+                                                    style={{width: 90}}
+                                                />
+                                                <span className="field-hint">Distance from hub</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Degradation full (m)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={500} max={20000}
+                                                    step={100}
+                                                    value={commsConfig.degradationFullMeters}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        degradationFullMeters: Math.max(500, Number(e.target.value))
+                                                    }))}
+                                                    style={{width: 90}}
+                                                />
+                                                <span className="field-hint">Max degradation distance</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Intermittent cycle (s)">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={0} max={120} step={1}
+                                                    value={commsConfig.intermittentCycleSec}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        intermittentCycleSec: Math.max(0, Number(e.target.value))
+                                                    }))}
+                                                    style={{width: 80}}
+                                                />
+                                                <span className="field-hint">0 = disabled</span>
+                                            </div>
+                                        </Field>
+                                        <Field label="Intermittent depth">
+                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                                                <input
+                                                    className="field-input" type="number" min={0} max={100} step={5}
+                                                    value={Math.round(commsConfig.intermittentDepth * 100)}
+                                                    disabled={!commsConfig.enabled}
+                                                    onChange={(e) => setCommsConfig((prev) => ({
+                                                        ...prev,
+                                                        intermittentDepth: Math.min(1, Math.max(0, Number(e.target.value) / 100))
+                                                    }))}
+                                                    style={{width: 80}}
+                                                />
+                                                <span className="field-hint">% signal drop at trough</span>
+                                            </div>
+                                        </Field>
+                                    </ControlGrid>
+                                    {commsConfig.enabled && drones.some((d) => d.comms) && (
+                                        <div className="callout" role="status" style={{marginTop: 8}}>
+                                            <strong>Comms status:</strong>{" "}
+                                            {drones.filter((d) => d.comms?.connected).length}/{drones.length} connected
+                                            {" · "}
+                                            Queue: {commsQueueRef.current.length} pending
+                                            {" · "}
+                                            Buffered: {totalBufferedScanCount}
+                                            {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality) && (
+                                                <span
+                                                    style={{color: "#f59e0b"}}>{" · "}Sensors degraded on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality).length} drone(s)</span>
+                                            )}
+                                            {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality) && (
+                                                <span
+                                                    style={{color: "#ef4444"}}>{" · "}Swarm disabled on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality).length} drone(s)</span>
                                             )}
                                         </div>
-                                        {scanValidationActive && (() => {
-                                            const realItems = scenario.anomalies.items.filter((a) => a.type !== "false-positive");
-                                            const detectedCount = realItems.filter((a) => a.detected).length;
-                                            const missedCount = realItems.length - detectedCount;
-                                            const allFound = missedCount === 0;
-                                            return (
-                                                <div
-                                                    className={`callout ${allFound ? "success" : "danger"}`}
-                                                    role="status"
-                                                    aria-live="polite"
-                                                    style={{marginTop: 8}}
-                                                >
-                                                    <strong>{detectedCount}/{realItems.length}</strong> anomalies detected
-                                                    {missedCount > 0
-                                                        ? ` · ${missedCount} missed — highlighted on the map with pulsing red markers.`
-                                                        : " — all anomalies found! ✓"}
-                                                </div>
-                                            );
-                                        })()}
-                                    </Field>
-                                </ControlGrid>
+                                    )}
 
-                                <div className="meta-row" style={{marginTop: 12}}>
-                                    <div><strong>Sector</strong> {sectorMeta.bounds.widthMeters / 1000} km
-                                        × {sectorMeta.bounds.heightMeters / 1000} km
+                                    <div className="meta-row" style={{marginTop: 12}}>
+                                        <div><strong>Sector</strong> {sectorMeta.bounds.widthMeters / 1000} km
+                                            × {sectorMeta.bounds.heightMeters / 1000} km
+                                        </div>
+                                        <div><strong>Hub</strong> x: {hub.position.x.toFixed(0)} m |
+                                            y: {hub.position.y.toFixed(0)} m
+                                        </div>
                                     </div>
-                                    <div><strong>Hub</strong> x: {hub.position.x.toFixed(0)} m |
-                                        y: {hub.position.y.toFixed(0)} m
-                                    </div>
+                                    {message &&
+                                        <div className="callout success" role="status"
+                                             aria-live="polite">{message}</div>}
+                                    {error &&
+                                        <div className="callout danger" role="alert"
+                                             aria-live="assertive">{error}</div>}
                                 </div>
-                                {message &&
-                                    <div className="callout success" role="status" aria-live="polite">{message}</div>}
-                                {error &&
-                                    <div className="callout danger" role="alert" aria-live="assertive">{error}</div>}
                             </div>
                         </div>
-                    </div>
-                </div>,
-                document.body
+                    </div>,
+                    document.body
                 )}
             </PageTransition>
         </AppShell>
