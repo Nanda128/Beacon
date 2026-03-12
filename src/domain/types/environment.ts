@@ -55,6 +55,7 @@ export type AnomalyInstance = {
     detected: boolean;
     detectionRadiusMeters: number;
     note?: string;
+    scanCertainty?: number;
 };
 
 export type AnomalySet = {

@@ -30,6 +30,7 @@ import {
     drawDroneHub,
     drawVoronoiCells,
     drawCoveragePaths,
+    drawScanValidation,
 } from "./canvas/layers";
 import {anomalyStyles} from "../config/anomalies";
 
@@ -49,6 +50,8 @@ type MaritimeCanvas2DProps = {
     sensorRangeMeters?: number;
     voronoiCells?: VoronoiCell[];
     coveragePlans?: CoveragePlan[];
+    fogOfWarEnabled?: boolean;
+    scanValidationActive?: boolean;
 };
 
 const MaritimeCanvas2D = ({
@@ -67,6 +70,8 @@ const MaritimeCanvas2D = ({
                               sensorRangeMeters,
                               voronoiCells,
                               coveragePlans,
+                              fogOfWarEnabled,
+                              scanValidationActive,
                           }: MaritimeCanvas2DProps) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -335,7 +340,7 @@ const MaritimeCanvas2D = ({
         ctx.scale(dpr, dpr);
 
         let raf = 0;
-        const render = () => {
+        const render = (timestamp: number) => {
             raf = requestAnimationFrame(render);
             ctx.save();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -347,7 +352,10 @@ const MaritimeCanvas2D = ({
             drawVoronoiCells(ctx, size, cameraRef.current, voronoiCells, selectedDroneIds);
             drawCoveragePaths(ctx, size, cameraRef.current, coveragePlans, selectedDroneIds);
             drawDroneHub(ctx, size, cameraRef.current, scenario);
-            drawAnomalies(ctx, size, cameraRef.current, scenario);
+            drawAnomalies(ctx, size, cameraRef.current, scenario, fogOfWarEnabled);
+            if (scanValidationActive) {
+                drawScanValidation(ctx, size, cameraRef.current, scenario, timestamp);
+            }
             drawDrones(ctx, size, cameraRef.current, drones, selectedDroneIds, {
                 showSensorRange,
                 sensorRangeMeters,
@@ -358,14 +366,16 @@ const MaritimeCanvas2D = ({
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive]);
 
     useEffect(() => {
         const handleGlobalPointerDown = (event: PointerEvent) => {
             const container = containerRef.current;
             if (!container) return;
-            const target = event.target as Node | null;
-            if (target && container.contains(target)) return;
+            const target = event.target as HTMLElement | null;
+            if (!target) return;
+            if (container.contains(target)) return;
+            if (target.closest(".scenario-drawer") || target.closest("[data-preserve-selection]")) return;
             onClearDroneSelection?.();
         };
         document.addEventListener("pointerdown", handleGlobalPointerDown);

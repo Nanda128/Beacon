@@ -263,13 +263,29 @@ export const drawAnomalyShape = (ctx: CanvasRenderingContext2D, style: {
     ctx.stroke();
 };
 
-export const drawAnomalies = (ctx: CanvasRenderingContext2D, size: Size, camera: CameraState, scenario: MaritimeScenario) => {
+export const drawAnomalies = (ctx: CanvasRenderingContext2D, size: Size, camera: CameraState, scenario: MaritimeScenario, fogOfWarEnabled?: boolean) => {
     scenario.anomalies.items.forEach((item) => {
+        const certainty = item.scanCertainty ?? 0;
+
+        if (fogOfWarEnabled && certainty <= 0 && !item.detected) return;
+
         const style = anomalyStyles[item.type];
         const screenPos = screenFromWorld(item.position, size, camera);
         const detectionRadiusPx = item.detectionRadiusMeters * camera.scale;
+
+        /* Determine certainty tier for visual feedback:
+         *   tier 0 = unknown (<10%)  : faint, pulsing outline only
+         *   tier 1 = low (10–40%)    : ghosted shape, no label
+         *   tier 2 = medium (40–70%) : semi-transparent shape + "?" label
+         *   tier 3 = high (70–100%)  : near-full shape
+         *   tier 4 = confirmed       : fully detected (original visuals)
+         */
+        const tier = item.detected ? 4 : certainty >= 0.7 ? 3 : certainty >= 0.4 ? 2 : certainty >= 0.1 ? 1 : 0;
+        const tierOpacity = fogOfWarEnabled ? [0.15, 0.3, 0.55, 0.8, 1.0][tier] : 1.0;
+
         ctx.save();
-        ctx.globalAlpha = item.detected ? 0.35 : 0.18;
+
+        ctx.globalAlpha = (item.detected ? 0.35 : 0.18) * tierOpacity;
         ctx.strokeStyle = style.color;
         ctx.setLineDash([6, 6]);
         ctx.lineWidth = 1.2;
@@ -277,13 +293,26 @@ export const drawAnomalies = (ctx: CanvasRenderingContext2D, size: Size, camera:
         ctx.arc(screenPos.x, screenPos.y, detectionRadiusPx, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
+
+        ctx.globalAlpha = tierOpacity;
         if (item.detected) {
             ctx.shadowColor = style.color;
             ctx.shadowBlur = 12;
         }
         drawAnomalyShape(ctx, style, screenPos);
         ctx.shadowBlur = 0;
+
+        if (fogOfWarEnabled && !item.detected && certainty > 0) {
+            ctx.save();
+            ctx.strokeStyle = style.color;
+            ctx.lineWidth = 2.5;
+            ctx.globalAlpha = 0.7;
+            ctx.beginPath();
+            ctx.arc(screenPos.x, screenPos.y, style.size + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * certainty);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         if (item.detected) {
             ctx.save();
             ctx.fillStyle = style.color;
@@ -301,12 +330,129 @@ export const drawAnomalies = (ctx: CanvasRenderingContext2D, size: Size, camera:
             ctx.stroke();
             ctx.restore();
         }
+
+        ctx.globalAlpha = tierOpacity;
         ctx.fillStyle = "#e5e7eb";
         ctx.font = "11px 'Inter', system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(anomalyTypeLabels[item.type], screenPos.x, screenPos.y - (style.size + 10));
+        if (fogOfWarEnabled && !item.detected) {
+            if (tier >= 2) {
+                ctx.fillText(`${anomalyTypeLabels[item.type]}?  ${Math.round(certainty * 100)}%`, screenPos.x, screenPos.y - (style.size + 10));
+            } else if (tier >= 1) {
+                ctx.fillText(`Contact  ${Math.round(certainty * 100)}%`, screenPos.x, screenPos.y - (style.size + 10));
+            }
+        } else {
+            ctx.fillText(anomalyTypeLabels[item.type], screenPos.x, screenPos.y - (style.size + 10));
+        }
         ctx.restore();
     });
+};
+
+export const drawScanValidation = (
+    ctx: CanvasRenderingContext2D,
+    size: Size,
+    camera: CameraState,
+    scenario: MaritimeScenario,
+    timestamp: number,
+) => {
+    const items = scenario.anomalies.items;
+    const missed = items.filter((a) => !a.detected && a.type !== "false-positive");
+    const detected = items.filter((a) => a.detected && a.type !== "false-positive");
+    const totalReal = items.filter((a) => a.type !== "false-positive").length;
+
+    const pulse = 0.5 + 0.5 * Math.sin(timestamp / 300);
+    const pulseRadius = 18 + pulse * 8;
+    const pulseAlpha = 0.4 + pulse * 0.35;
+
+    missed.forEach((item) => {
+        const screenPos = screenFromWorld(item.position, size, camera);
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(239,68,68,${pulseAlpha.toFixed(2)})`;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, pulseRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(239,68,68,0.85)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, 13, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(239,68,68,0.6)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(screenPos.x - 18, screenPos.y);
+        ctx.lineTo(screenPos.x + 18, screenPos.y);
+        ctx.moveTo(screenPos.x, screenPos.y - 18);
+        ctx.lineTo(screenPos.x, screenPos.y + 18);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = "rgba(239,68,68,0.95)";
+        ctx.font = "bold 11px 'Inter', system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("MISSED", screenPos.x, screenPos.y + pulseRadius + 14);
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "10px 'Inter', system-ui, -apple-system, sans-serif";
+        ctx.fillText(anomalyTypeLabels[item.type], screenPos.x, screenPos.y + pulseRadius + 26);
+        ctx.restore();
+    });
+
+    detected.forEach((item) => {
+        const screenPos = screenFromWorld(item.position, size, camera);
+        ctx.save();
+        ctx.strokeStyle = "rgba(34,197,94,0.8)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, 14, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = "rgba(34,197,94,0.95)";
+        ctx.lineWidth = 2.2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(screenPos.x - 4, screenPos.y);
+        ctx.lineTo(screenPos.x - 1, screenPos.y + 4);
+        ctx.lineTo(screenPos.x + 5, screenPos.y - 3);
+        ctx.stroke();
+        ctx.restore();
+    });
+
+    const badgeText = `Scan Validation: ${detected.length}/${totalReal} detected · ${missed.length} missed`;
+    ctx.save();
+    ctx.font = "bold 13px 'Inter', system-ui, -apple-system, sans-serif";
+    const textWidth = ctx.measureText(badgeText).width;
+    const badgeW = textWidth + 32;
+    const badgeH = 32;
+    const badgeX = (size.width - badgeW) / 2;
+    const badgeY = 12;
+    const badgeColor = missed.length === 0 ? "rgba(34,197,94,0.9)" : "rgba(239,68,68,0.9)";
+
+    ctx.fillStyle = "rgba(15,23,42,0.85)";
+    ctx.beginPath();
+    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+    ctx.fill();
+    ctx.strokeStyle = badgeColor;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+    ctx.stroke();
+
+    ctx.fillStyle = badgeColor;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(badgeText, size.width / 2, badgeY + badgeH / 2);
+    ctx.restore();
 };
 
 export const drawDrones = (
