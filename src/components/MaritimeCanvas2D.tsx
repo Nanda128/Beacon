@@ -3,6 +3,7 @@ import type {MaritimeScenario, Vec2} from "../domain/types/environment";
 import type {AnomalyType} from "../domain/types/environment";
 import type {DroneState} from "../domain/types/drone";
 import type {Alert} from "../domain/types/alert";
+import type {CoverageHeatmapGrid, MissionMetricsSummary} from "../domain/types/metrics";
 import type {VoronoiCell} from "./canvas/voronoi";
 import type {CoveragePlan} from "../domain/coverage/planner";
 import {anomalyTypeLabels} from "../config/anomalies";
@@ -30,13 +31,14 @@ import {
     findAnomalyAtScreen,
     findDroneAtScreen,
     drawDroneHub,
+    drawCoverageHeatmap,
     drawVoronoiCells,
     drawCoveragePaths,
     drawScanValidation,
 } from "./canvas/layers";
 import {anomalyStyles} from "../config/anomalies";
 
-type MaritimeCanvas2DProps = {
+export type MaritimeCanvas2DProps = {
     gridSpacing?: number;
     scenario: MaritimeScenario;
     onToggleAnomaly?: (id: string) => void;
@@ -55,28 +57,32 @@ type MaritimeCanvas2DProps = {
     fogOfWarEnabled?: boolean;
     scanValidationActive?: boolean;
     alerts?: Alert[];
+    coverageHeatmap?: CoverageHeatmapGrid;
+    metricsSummary?: MissionMetricsSummary;
 };
 
-const MaritimeCanvas2D = ({
-                              gridSpacing = 200,
-                              scenario,
-                              onToggleAnomaly,
-                              drones = [],
-                              selectedDroneIds = [],
-                              onSelectDrones,
-                              onAddDronesToSelection,
-                              onToggleDroneSelection,
-                              onClearDroneSelection,
-                              onMoveDrone,
-                              onSetWaypoint,
-                              showSensorRange,
-                              sensorRangeMeters,
-                              voronoiCells,
-                              coveragePlans,
-                              fogOfWarEnabled,
-                              scanValidationActive,
-                              alerts = [],
-                          }: MaritimeCanvas2DProps) => {
+export default function MaritimeCanvas2D({
+                                             gridSpacing = 200,
+                                             scenario,
+                                             onToggleAnomaly,
+                                             drones = [],
+                                             selectedDroneIds = [],
+                                             onSelectDrones,
+                                             onAddDronesToSelection,
+                                             onToggleDroneSelection,
+                                             onClearDroneSelection,
+                                             onMoveDrone,
+                                             onSetWaypoint,
+                                             showSensorRange,
+                                             sensorRangeMeters,
+                                             voronoiCells,
+                                             coveragePlans,
+                                             fogOfWarEnabled,
+                                             scanValidationActive,
+                                             alerts = [],
+                                             coverageHeatmap,
+                                             metricsSummary,
+                                         }: MaritimeCanvas2DProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [size, setSize] = useState<Size>({width: 0, height: 0});
@@ -93,7 +99,7 @@ const MaritimeCanvas2D = ({
     const [selectionBox, setSelectionBox] = useState<{ start: Vec2; end: Vec2 } | null>(null);
     const waterPatternRef = useRef<CanvasPattern | null>(null);
     const [isExpanded, setIsExpanded] = useState(false);
-    const previousCameraRef = useRef<CameraState | null>(null);
+    const [toolbarInsetPx, setToolbarInsetPx] = useState(68);
 
     const computeScale = useCallback(() => computeMinScale(size, scenario.sector.bounds), [size, scenario.sector.bounds]);
 
@@ -104,19 +110,31 @@ const MaritimeCanvas2D = ({
         setCamera(nextState);
     }, [computeScale]);
 
-    const fitCameraToSector = useCallback((padding = 48) => {
-        const next = fitCameraToBounds(size, scenario.sector.bounds, padding);
+    const fitCameraToSector = useCallback((padding?: number) => {
+        const safePadding = padding ?? (isExpanded ? 64 : 48);
+        const next = fitCameraToBounds(size, scenario.sector.bounds, safePadding);
         if (next) setCameraState(next);
-    }, [scenario.sector.bounds, setCameraState, size]);
+    }, [isExpanded, scenario.sector.bounds, setCameraState, size]);
 
     const toggleExpanded = () => {
-        setIsExpanded((prev) => {
-            if (!prev) {
-                previousCameraRef.current = cameraRef.current;
-            }
-            return !prev;
-        });
+        setIsExpanded((prev) => !prev);
     };
+
+    useEffect(() => {
+        const toolbar = document.querySelector<HTMLElement>(".toolbar");
+        const updateInset = () => {
+            const toolbarHeight = toolbar?.getBoundingClientRect().height ?? 56;
+            setToolbarInsetPx(Math.max(64, Math.ceil(toolbarHeight) + 12));
+        };
+        updateInset();
+        window.addEventListener("resize", updateInset);
+        const observer = toolbar ? new ResizeObserver(updateInset) : null;
+        if (observer && toolbar) observer.observe(toolbar);
+        return () => {
+            window.removeEventListener("resize", updateInset);
+            observer?.disconnect();
+        };
+    }, []);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -185,7 +203,7 @@ const MaritimeCanvas2D = ({
             dragOffsetRef.current = {x: hitDrone.position.x - world.x, y: hitDrone.position.y - world.y};
             applySelection([hitDrone.id], mode);
         } else {
-            const shouldPan = event.button === 1 || event.button === 2 || event.altKey;
+            const shouldPan = false;
             if (shouldPan) {
                 interactionModeRef.current = "pan";
             } else {
@@ -273,22 +291,8 @@ const MaritimeCanvas2D = ({
     };
 
     const handleWheel = useCallback((event: WheelEvent) => {
-        event.preventDefault();
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
-        const nextScale = clamp(cameraRef.current.scale * zoomFactor, computeScale(), 30);
-        const local = {x: event.clientX - rect.left, y: event.clientY - rect.top};
-        const before = worldFromScreen(local, size, cameraRef.current);
-        const after = worldFromScreen(local, size, {...cameraRef.current, scale: nextScale});
-        setCameraState({
-            center: {
-                x: cameraRef.current.center.x + (before.x - after.x),
-                y: cameraRef.current.center.y + (before.y - after.y),
-            },
-            scale: nextScale,
-        });
-    }, [computeScale, size, setCameraState]);
+        if (isExpanded) event.preventDefault();
+    }, [isExpanded]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -306,30 +310,9 @@ const MaritimeCanvas2D = ({
     }, [scenario]);
 
     useEffect(() => {
-        if (isExpanded) {
-            fitCameraToSector();
-            return;
-        }
-        const {origin, widthMeters, heightMeters} = scenario.sector.bounds;
-        const center = {x: origin.x + widthMeters / 2, y: origin.y + heightMeters / 2};
-        setCameraState({center, scale: 1.2});
-    }, [scenario.sector.bounds, isExpanded]);
-
-    useEffect(() => {
         if (size.width === 0 || size.height === 0) return;
         fitCameraToSector();
-    }, [isExpanded, size.height, size.width, fitCameraToSector]);
-
-    useEffect(() => {
-        if (!isExpanded) return;
-        if (size.width === 0 || size.height === 0) return;
-        fitCameraToSector();
-    }, [isExpanded, size.height, size.width, fitCameraToSector]);
-
-    useEffect(() => {
-        if (!isExpanded) return;
-        previousCameraRef.current = null;
-    }, [scenario.sector.bounds.heightMeters, scenario.sector.bounds.origin.x, scenario.sector.bounds.origin.y, scenario.sector.bounds.widthMeters, scenario.seed, isExpanded]);
+    }, [fitCameraToSector, scenario.sector.bounds.heightMeters, scenario.sector.bounds.origin.x, scenario.sector.bounds.origin.y, scenario.sector.bounds.widthMeters, scenario.seed, size.height, size.width]);
 
     useEffect(() => {
         if (!isExpanded) return;
@@ -359,6 +342,7 @@ const MaritimeCanvas2D = ({
             drawWater(ctx, size, cameraRef.current, waterPatternRef.current);
             drawGrid(ctx, size, cameraRef.current, gridSpacing);
             drawAxes(ctx, size, cameraRef.current);
+            drawCoverageHeatmap(ctx, size, cameraRef.current, scenario.sector.bounds, coverageHeatmap);
             drawSectorBounds(ctx, size, cameraRef.current, scenario);
             drawVoronoiCells(ctx, size, cameraRef.current, voronoiCells, selectedDroneIds);
             drawCoveragePaths(ctx, size, cameraRef.current, coveragePlans, selectedDroneIds);
@@ -378,7 +362,7 @@ const MaritimeCanvas2D = ({
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts, coverageHeatmap]);
 
     useEffect(() => {
         const handleGlobalPointerDown = (event: PointerEvent) => {
@@ -394,14 +378,18 @@ const MaritimeCanvas2D = ({
         return () => document.removeEventListener("pointerdown", handleGlobalPointerDown);
     }, [onClearDroneSelection]);
 
+    const expandedTop = toolbarInsetPx;
+    const expandedWrapperStyle = isExpanded ? {top: expandedTop, right: 12, bottom: 12, left: 12} : undefined;
+    const expandedBackdropStyle = isExpanded ? {top: expandedTop} : undefined;
+
     return (
         <>
-            {isExpanded && <div className="canvas-fullscreen-backdrop" onClick={toggleExpanded}/>}
+            {isExpanded && <div className="canvas-fullscreen-backdrop" style={expandedBackdropStyle} onClick={toggleExpanded}/>}
             <div className="panel-card">
                 <div className="badge" style={{marginBottom: 10}}>
                     <span className="badge-dot"/> 2D canvas
                 </div>
-                <div ref={containerRef} className={`canvas-wrapper ${isExpanded ? "expanded" : ""}`}>
+                <div ref={containerRef} className={`canvas-wrapper ${isExpanded ? "expanded" : ""}`} style={expandedWrapperStyle}>
                     <button className="expand-button" onClick={toggleExpanded}>
                         {isExpanded ? "Exit full view" : "Full view"}
                     </button>
@@ -468,6 +456,18 @@ const MaritimeCanvas2D = ({
                                 <strong>Coverage</strong> avg {Math.round(coveragePlans.reduce((sum, p) => sum + p.completenessPct, 0) / coveragePlans.length)}%
                             </div>
                         )}
+                        {metricsSummary && (
+                            <>
+                                <div>
+                                    <strong>Search efficiency</strong> {Math.round(metricsSummary.weightedDetectionPct)}%
+                                    weighted detect
+                                </div>
+                                <div>
+                                    <strong>Operator load</strong> {metricsSummary.operatorLoadIndex}/100
+                                    · {metricsSummary.peakUnacknowledgedAlerts} peak unacked
+                                </div>
+                            </>
+                        )}
                         <div style={{display: "grid", gap: 2, marginTop: 4}}>
                             {Object.entries(anomalyStyles).map(([type, style]) => {
                                 const typed = type as AnomalyType;
@@ -490,7 +490,7 @@ const MaritimeCanvas2D = ({
                         </div>
                         <div style={{marginTop: 4, opacity: 0.7}}>Drag empty water to box-select (Shift add, Ctrl/Cmd
                             toggle)
-                            · Alt/right drag to pan · Scroll to zoom · Drag drones to reposition · Shift/Ctrl/Cmd click
+                            · Drag drones to reposition · Shift/Ctrl/Cmd click
                             to
                             queue waypoint · Click marker to
                             toggle
@@ -503,4 +503,3 @@ const MaritimeCanvas2D = ({
     );
 }
 
-export default MaritimeCanvas2D;

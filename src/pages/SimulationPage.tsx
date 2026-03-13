@@ -32,7 +32,25 @@ import type {QueuedMessage, OfflineBuffer} from "../domain/types/comms";
 import type {Alert} from "../domain/types/alert";
 import {useAlertAudio} from "../hooks/useAlertAudio";
 import AlertPanel from "../components/AlertPanel";
+import MetricsDashboard from "../components/MetricsDashboard";
 import type {DetectionLogEntry, AnomalyInstance, Vec2} from "../domain/types/environment";
+import type {MissionMetricsSession} from "../domain/types/metrics";
+import {
+    createMissionMetricsSession,
+    recordAlertAcknowledgements,
+    recordAlertsRaised,
+    recordAnomalyOpportunities,
+    recordDetectionLogEntries,
+    recordManualCommand,
+    recordPacketDispatch,
+    sampleMissionMetrics,
+} from "../domain/metrics/collector";
+import {
+    downloadMissionMetricsEventsCSV,
+    downloadMissionMetricsJSON,
+    downloadMissionMetricsSummaryCSV,
+    downloadMissionMetricsTimelineCSV,
+} from "../utils/metricsExport";
 import {logError} from "../utils/errorLogging";
 
 const commAlertBandRank: Record<CommAlertBand, number> = {
@@ -82,7 +100,7 @@ export default function SimulationPage() {
 
     const {
         scenario, message, error, setMessage,
-        handleToggleAnomaly,
+        handleToggleAnomaly: rawHandleToggleAnomaly,
         sectorMeta, updateAnomalies,
     } = scenarioHook;
 
@@ -91,6 +109,10 @@ export default function SimulationPage() {
     const scenarioRef = useRef(scenario);
     const dronesRef = useRef(drones);
     const alertsRef = useRef(alerts);
+    const manualInterventionEnabledRef = useRef(manualInterventionEnabled);
+    const [metrics, setMetrics] = useState<MissionMetricsSession>(() => createMissionMetricsSession(scenario));
+    const [metricsCollectionEnabled, setMetricsCollectionEnabled] = useState(true);
+    const metricsCollectionEnabledRef = useRef(true);
     const {playForAlerts} = useAlertAudio(alertAudioEnabled);
 
     useEffect(() => {
@@ -102,6 +124,87 @@ export default function SimulationPage() {
     useEffect(() => {
         alertsRef.current = alerts;
     }, [alerts]);
+    useEffect(() => {
+        manualInterventionEnabledRef.current = manualInterventionEnabled;
+    }, [manualInterventionEnabled]);
+    const updateMetricsCollectionEnabled = useCallback((enabled: boolean) => {
+        metricsCollectionEnabledRef.current = enabled;
+        setMetricsCollectionEnabled(enabled);
+    }, []);
+    useEffect(() => {
+        setMetrics(createMissionMetricsSession(scenario));
+        updateMetricsCollectionEnabled(true);
+    }, [scenario.name, scenario.seed, scenario.sector.createdAt, updateMetricsCollectionEnabled]);
+
+    const appendLogWithMetrics = useCallback((entries: DetectionLogEntry[]) => {
+        if (entries.length === 0) return;
+        appendLog(entries);
+        if (!metricsCollectionEnabledRef.current) return;
+        setMetrics((prev) => recordDetectionLogEntries(prev, scenarioRef.current, entries));
+    }, [appendLog]);
+
+    const appendAlertsWithMetrics = useCallback((newAlerts: Alert[]) => {
+        if (newAlerts.length === 0) return;
+        appendAlerts(newAlerts);
+        if (!metricsCollectionEnabledRef.current) return;
+        const nextUnackCount = alertsRef.current.filter((alert) => !alert.acknowledged).length
+            + newAlerts.filter((alert) => !alert.acknowledged).length;
+        setMetrics((prev) => recordAlertsRaised(prev, scenarioRef.current, newAlerts, nextUnackCount));
+    }, [appendAlerts]);
+
+    const recordManualMetric = useCallback((label: string, value?: number, type?: "manual-command" | "coverage-command") => {
+        if (!metricsCollectionEnabledRef.current) return;
+        const timestamp = Date.now();
+        setMetrics((prev) => recordManualCommand(prev, scenarioRef.current, {timestamp, label, value, type}));
+    }, []);
+
+    const handleToggleAnomaly = useCallback((id: string) => {
+        const item = scenarioRef.current.anomalies.items.find((anomaly) => anomaly.id === id);
+        rawHandleToggleAnomaly(id);
+        if (item?.type !== "false-positive") {
+            recordManualMetric(`${item?.detected ? "Unmarked" : "Manually confirmed"} anomaly ${id}.`);
+        }
+    }, [rawHandleToggleAnomaly, recordManualMetric]);
+
+    const handleAcknowledgeAlert = useCallback((id: string) => {
+        const alert = alerts.find((entry) => entry.id === id && !entry.acknowledged);
+        acknowledgeAlert(id);
+        if (!alert || !metricsCollectionEnabledRef.current) return;
+        const acknowledgedAt = Date.now();
+        setMetrics((prev) => recordAlertAcknowledgements(prev, scenarioRef.current, [{
+            id: alert.id,
+            message: alert.message,
+            timestamp: alert.timestamp,
+            severity: alert.severity,
+            droneId: alert.droneId,
+            anomalyId: alert.anomalyId,
+        }], acknowledgedAt));
+    }, [acknowledgeAlert, alerts]);
+
+    const handleAcknowledgeAllAlerts = useCallback(() => {
+        const pending = alerts.filter((alert) => !alert.acknowledged);
+        acknowledgeAllAlerts();
+        if (pending.length === 0 || !metricsCollectionEnabledRef.current) return;
+        const acknowledgedAt = Date.now();
+        setMetrics((prev) => recordAlertAcknowledgements(
+            prev,
+            scenarioRef.current,
+            pending.map((alert) => ({
+                id: alert.id,
+                message: alert.message,
+                timestamp: alert.timestamp,
+                severity: alert.severity,
+                droneId: alert.droneId,
+                anomalyId: alert.anomalyId,
+            })),
+            acknowledgedAt,
+        ));
+    }, [acknowledgeAllAlerts, alerts]);
+
+    const handleExportMetricsJSON = useCallback(() => downloadMissionMetricsJSON(metrics), [metrics]);
+    const handleExportMetricsSummaryCSV = useCallback(() => downloadMissionMetricsSummaryCSV(metrics), [metrics]);
+    const handleExportMetricsTimelineCSV = useCallback(() => downloadMissionMetricsTimelineCSV(metrics), [metrics]);
+    const handleExportMetricsEventsCSV = useCallback(() => downloadMissionMetricsEventsCSV(metrics), [metrics]);
 
     const lastFalseNegativeRef = useRef<Record<string, number>>({});
 
@@ -154,6 +257,7 @@ export default function SimulationPage() {
             if (!ids.includes(drone.id)) return drone;
             return {...drone, targetPosition: hub.position, waypoints: [], status: "returning", lastUpdate: now};
         }));
+        recordManualMetric(`Issued immediate RTB to ${ids.length} drone(s).`, ids.length);
         setMessage(`RTB immediately for ${ids.length} drone${ids.length === 1 ? "" : "s"}.`);
     };
 
@@ -174,6 +278,7 @@ export default function SimulationPage() {
                 lastUpdate: now
             };
         }));
+        recordManualMetric(`Queued RTB after completion for ${ids.length} drone(s).`, ids.length);
         setMessage(`RTB after completion queued for ${ids.length} drone${ids.length === 1 ? "" : "s"}.`);
     };
 
@@ -200,6 +305,7 @@ export default function SimulationPage() {
             }
             return {...drone, targetPosition: clampedPoint, waypoints: [], status: "enroute", lastUpdate: Date.now()};
         }));
+        recordManualMetric(`${append ? "Queued" : "Assigned"} waypoint for ${selectedDroneIds.length} drone(s).`, selectedDroneIds.length);
     };
 
     const handleDronePositionChange = (id: string, position: Vec2) => {
@@ -211,6 +317,7 @@ export default function SimulationPage() {
             status: "idle",
             lastUpdate: Date.now()
         } : drone));
+        recordManualMetric(`Repositioned ${id}.`, 1);
     };
 
     const handleDroneSpeedChange = (id: string, speedKts: number) => {
@@ -255,8 +362,9 @@ export default function SimulationPage() {
             delete batteryWarningStateRef.current[id];
         });
         clear();
+        recordManualMetric(`Removed ${count} drone(s) from the mission.`, count);
         setMessage(`Removed ${count} drone${count === 1 ? "" : "s"}: ${names}`);
-    }, [setDrones, batteryWarningStateRef, clear, setMessage]);
+    }, [setDrones, batteryWarningStateRef, clear, setMessage, recordManualMetric]);
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -301,6 +409,7 @@ export default function SimulationPage() {
         }
         setVoronoiEnabled(true);
         const cells = recomputeVoronoi();
+        recordManualMetric(`Computed Voronoi coverage for ${coverageSourceCount} drone(s).`, coverageSourceCount, "coverage-command");
         if (cells.length === 0) setMessage("Unable to generate Voronoi cells for the current drone layout.");
         else setMessage(`Computed coverage for ${coverageSourceCount} drone${coverageSourceCount === 1 ? "" : "s"}.`);
     };
@@ -311,6 +420,7 @@ export default function SimulationPage() {
         setCoveragePlans([]);
         setCoverageActive(false);
         setActiveCoverageDroneIds([]);
+        recordManualMetric("Cleared coverage overlay.", undefined, "coverage-command");
     };
 
     const computeCoveragePlansFromCells = useCallback((cells: ReturnType<typeof computeVoronoiCells>) => {
@@ -341,6 +451,10 @@ export default function SimulationPage() {
             return;
         }
         const participantIds = plans.map((plan) => plan.droneId);
+        if (!metricsCollectionEnabledRef.current) {
+            setMetrics(createMissionMetricsSession(scenarioRef.current));
+        }
+        updateMetricsCollectionEnabled(true);
         setVoronoiEnabled(true);
         setVoronoiCells(cells);
         setCoveragePlans(plans);
@@ -362,6 +476,7 @@ export default function SimulationPage() {
                 coveragePlan: plan
             };
         }));
+        recordManualMetric(`Started autonomous coverage for ${participantIds.length} drone(s).`, participantIds.length, "coverage-command");
         setMessage(`Starting coverage with spacing ${sweepSpacingMeters} m and ${Math.round(coverageOverlap * 100)}% overlap. Drones will return to the hub after their sweeps.`);
     };
 
@@ -385,11 +500,46 @@ export default function SimulationPage() {
 
         if (!allReturnedToHub) return;
 
+        if (metricsCollectionEnabledRef.current) {
+            const now = Date.now();
+            const currentAlerts = alertsRef.current;
+            setMetrics((prev) => sampleMissionMetrics(prev, {
+                now,
+                scenario: scenarioRef.current,
+                drones: dronesRef.current,
+                unacknowledgedAlerts: currentAlerts.filter((alert) => !alert.acknowledged).length,
+                criticalAlertCount: currentAlerts.filter((alert) => !alert.acknowledged && alert.severity === "critical").length,
+                manualInterventionEnabled: manualInterventionEnabledRef.current,
+                sensorRangeMeters: sensorSettings.rangeMeters,
+            }));
+            updateMetricsCollectionEnabled(false);
+        }
+
         setCoverageActive(false);
         setManualInterventionEnabled(false);
         setActiveCoverageDroneIds([]);
         setMessage("Coverage complete — all participating drones have returned to the hub.");
-    }, [activeCoverageDroneIds, coverageActive, drones, isHubWaypoint, setCoverageActive, setManualInterventionEnabled, setMessage]);
+    }, [activeCoverageDroneIds, coverageActive, drones, isHubWaypoint, sensorSettings.rangeMeters, setCoverageActive, setManualInterventionEnabled, setMessage, updateMetricsCollectionEnabled]);
+
+    useEffect(() => {
+        if (!metricsCollectionEnabled) return;
+        const interval = window.setInterval(() => {
+            if (!metricsCollectionEnabledRef.current) return;
+            const now = Date.now();
+            const currentAlerts = alertsRef.current;
+            setMetrics((prev) => sampleMissionMetrics(prev, {
+                now,
+                scenario: scenarioRef.current,
+                drones: dronesRef.current,
+                unacknowledgedAlerts: currentAlerts.filter((alert) => !alert.acknowledged).length,
+                criticalAlertCount: currentAlerts.filter((alert) => !alert.acknowledged && alert.severity === "critical").length,
+                manualInterventionEnabled: manualInterventionEnabledRef.current,
+                sensorRangeMeters: sensorSettings.rangeMeters,
+            }));
+        }, 1000);
+
+        return () => window.clearInterval(interval);
+    }, [metricsCollectionEnabled, sensorSettings.rangeMeters]);
 
     useEffect(() => {
         let raf: number;
@@ -412,7 +562,13 @@ export default function SimulationPage() {
                     commsQueueRef.current = remaining;
                     if (delivered.length > 0) {
                         const deliveredEntries = delivered.map((m) => m.payload);
-                        appendLog(deliveredEntries);
+                        appendLogWithMetrics(deliveredEntries);
+                        if (metricsCollectionEnabledRef.current) {
+                            setMetrics((prev) => recordPacketDispatch(prev, scenarioRef.current, {
+                                timestamp: now,
+                                delivered: deliveredEntries.length,
+                            }));
+                        }
                         setMessage(deliveredEntries[0].message);
                         const newAlerts = generateAlertsFromTick({
                             drones: dronesRef.current,
@@ -422,7 +578,7 @@ export default function SimulationPage() {
                             now,
                         });
                         if (newAlerts.length > 0) {
-                            appendAlerts(newAlerts);
+                            appendAlertsWithMetrics(newAlerts);
                             playForAlerts(newAlerts);
                         }
                     }
@@ -474,14 +630,27 @@ export default function SimulationPage() {
                                         message: `${drone.callsign} reconnected — delivering ${buffer.events.length} buffered scan result${buffer.events.length === 1 ? "" : "s"}.`,
                                     };
                                     const allEvents = [reconnectMsg, ...buffer.events];
+                                    let queuedCount = 0;
+                                    let deliveredCount = 0;
                                     for (const evt of allEvents) {
                                         if (latency > 5) {
                                             commsQueueRef.current = enqueueMessage(
                                                 commsQueueRef.current, evt.id, evt, latency, now, drone.id,
                                             );
+                                            queuedCount += 1;
                                         } else {
-                                            appendLog([evt]);
+                                            appendLogWithMetrics([evt]);
+                                            deliveredCount += 1;
                                         }
+                                    }
+                                    if (metricsCollectionEnabledRef.current) {
+                                        setMetrics((prev) => recordPacketDispatch(prev, scenarioRef.current, {
+                                            timestamp: now,
+                                            attempted: allEvents.length,
+                                            queued: queuedCount,
+                                            delivered: deliveredCount,
+                                            queuedLatencyTotalMs: queuedCount * latency,
+                                        }));
                                     }
                                     setMessage(reconnectMsg.message);
                                     const newAlerts = generateAlertsFromTick({
@@ -492,7 +661,7 @@ export default function SimulationPage() {
                                         now,
                                     });
                                     if (newAlerts.length > 0) {
-                                        appendAlerts(newAlerts);
+                                        appendAlertsWithMetrics(newAlerts);
                                         playForAlerts(newAlerts);
                                     }
                                 }
@@ -687,7 +856,7 @@ export default function SimulationPage() {
                     };
                 }));
                 if (events.length > 0) {
-                    appendLog(events);
+                    appendLogWithMetrics(events);
                     setMessage(events[0].message);
                     const newAlerts = generateAlertsFromTick({
                         drones: dronesRef.current,
@@ -697,12 +866,12 @@ export default function SimulationPage() {
                         now: Date.now(),
                     });
                     if (newAlerts.length > 0) {
-                        appendAlerts(newAlerts);
+                        appendAlertsWithMetrics(newAlerts);
                         playForAlerts(newAlerts);
                     }
                 }
                 if (commTransitionAlerts.length > 0) {
-                    appendAlerts(commTransitionAlerts);
+                    appendAlertsWithMetrics(commTransitionAlerts);
                     playForAlerts(commTransitionAlerts);
                 }
             } catch (err) {
@@ -724,7 +893,7 @@ export default function SimulationPage() {
             cancelAnimationFrame(raf);
             lastFrameRef.current = null;
         };
-    }, [appendLog, appendAlerts, playForAlerts, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
+    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
 
     useEffect(() => {
         if (!sensorsEnabled) return;
@@ -739,6 +908,7 @@ export default function SimulationPage() {
                 let changed = false;
                 const events: DetectionLogEntry[] = [];
                 const range = Math.max(10, sensorSettings.rangeMeters);
+                const opportunityAnomalyIds = new Set<string>();
                 currentDrones.forEach((drone) => {
                     const sensorMultiplier = (cc.enabled && drone.comms && drone.comms.signalQuality < commsThresholds.reducedSensorQuality)
                         ? 0.5
@@ -751,6 +921,7 @@ export default function SimulationPage() {
                         const dy = anomaly.position.y - drone.position.y;
                         const distance = Math.hypot(dx, dy);
                         if (distance > range) return;
+                        if (anomaly.type !== "false-positive") opportunityAnomalyIds.add(anomaly.id);
                         const rawConfidence = detectionProbability(distance);
                         const confidence = rawConfidence * sensorMultiplier;
 
@@ -899,15 +1070,24 @@ export default function SimulationPage() {
                     }
                 });
                 if (changed) updateAnomalies(() => updatedItems);
+                if (metricsCollectionEnabledRef.current && opportunityAnomalyIds.size > 0) {
+                    setMetrics((prev) => recordAnomalyOpportunities(prev, [...opportunityAnomalyIds], now));
+                }
 
                 if (cc.enabled && events.length > 0) {
                     const immediateEvents: DetectionLogEntry[] = [];
+                    let attemptedCount = 0;
+                    let droppedCount = 0;
+                    let queuedCount = 0;
+                    let queuedLatencyTotalMs = 0;
                     events.forEach((evt) => {
+                        attemptedCount += 1;
                         const drone = currentDrones.find((d) => d.id === evt.droneId);
                         const lossRate = drone?.comms?.packetLossRate ?? cc.basePacketLossPct;
                         const latency = drone?.comms?.latencyMs ?? cc.baseLatencyMs;
 
                         if (shouldDropPacket(lossRate, Math.random())) {
+                            droppedCount += 1;
                             return;
                         }
 
@@ -920,13 +1100,25 @@ export default function SimulationPage() {
                                 now,
                                 evt.droneId ?? "unknown",
                             );
+                            queuedCount += 1;
+                            queuedLatencyTotalMs += latency;
                         } else {
                             immediateEvents.push(evt);
                         }
                     });
+                    if (metricsCollectionEnabledRef.current) {
+                        setMetrics((prev) => recordPacketDispatch(prev, scenarioRef.current, {
+                            timestamp: now,
+                            attempted: attemptedCount,
+                            dropped: droppedCount,
+                            queued: queuedCount,
+                            delivered: immediateEvents.length,
+                            queuedLatencyTotalMs,
+                        }));
+                    }
 
                     if (immediateEvents.length > 0) {
-                        appendLog(immediateEvents);
+                        appendLogWithMetrics(immediateEvents);
                         setMessage(immediateEvents[0].message);
                         const newAlerts = generateAlertsFromTick({
                             drones: dronesRef.current,
@@ -936,12 +1128,12 @@ export default function SimulationPage() {
                             now: Date.now(),
                         });
                         if (newAlerts.length > 0) {
-                            appendAlerts(newAlerts);
+                            appendAlertsWithMetrics(newAlerts);
                             playForAlerts(newAlerts);
                         }
                     }
                 } else if (events.length > 0) {
-                    appendLog(events);
+                    appendLogWithMetrics(events);
                     setMessage(events[0].message);
                     const newAlerts = generateAlertsFromTick({
                         drones: dronesRef.current,
@@ -951,7 +1143,7 @@ export default function SimulationPage() {
                         now: Date.now(),
                     });
                     if (newAlerts.length > 0) {
-                        appendAlerts(newAlerts);
+                        appendAlertsWithMetrics(newAlerts);
                         playForAlerts(newAlerts);
                     }
                 }
@@ -968,12 +1160,17 @@ export default function SimulationPage() {
             }
         }, sensorSettings.checkIntervalMs);
         return () => window.clearInterval(interval);
-    }, [appendLog, appendAlerts, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
+    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
 
     const handleBackToSetup = () => {
         setPhase("setup");
         navigate("/setup");
     };
+
+    const canvasMetricsProps = {
+        coverageHeatmap: metrics.coverage,
+        metricsSummary: metrics.summary,
+    } as unknown as Record<string, unknown>;
 
     return (
         <AppShell subtitle="Active Mission">
@@ -981,7 +1178,7 @@ export default function SimulationPage() {
                 <div className="simulation-container content-with-drawer">
                     <nav className="setup-nav" aria-label="Mission navigation">
                         <button className="btn ghost btn-sm" onClick={handleBackToSetup}>← Back to Setup</button>
-                        <div className="sim-status-bar" role="status" aria-live="polite">
+                        <div className="sim-status-bar" role="status" aria-live="polite" data-tutorial-id="sim-status-bar">
                             <span><strong>Drones</strong> {drones.length}</span>
                             <span><strong>Detected</strong> {scenario.anomalies.items.filter((a) => a.detected).length}/{scenario.anomalies.items.length}</span>
                             <span><strong>Sea state</strong> {sectorMeta.conditions.seaState}</span>
@@ -1013,35 +1210,46 @@ export default function SimulationPage() {
                     </nav>
 
                     <div className="viewer-row">
-                        <MaritimeCanvas2D
-                            gridSpacing={200}
-                            scenario={scenario}
-                            onToggleAnomaly={handleToggleAnomaly}
-                            drones={drones}
-                            selectedDroneIds={selectedDroneIds}
-                            onSelectDrones={select}
-                            onAddDronesToSelection={add}
-                            onToggleDroneSelection={toggle}
-                            onClearDroneSelection={clear}
-                            onMoveDrone={interactionLocked ? undefined : handleDronePositionChange}
-                            onSetWaypoint={interactionLocked ? undefined : handleSetWaypoint}
-                            showSensorRange={sensorsEnabled && showSensorRanges}
-                            sensorRangeMeters={sensorSettings.rangeMeters}
-                            voronoiCells={voronoiEnabled ? voronoiCells : []}
-                            coveragePlans={coveragePlans}
-                            fogOfWarEnabled={fogOfWarEnabled}
-                            scanValidationActive={scanValidationActive}
-                            alerts={alerts}
+                        <MetricsDashboard
+                            metrics={metrics}
+                            onExportJSON={handleExportMetricsJSON}
+                            onExportSummaryCSV={handleExportMetricsSummaryCSV}
+                            onExportTimelineCSV={handleExportMetricsTimelineCSV}
+                            onExportEventsCSV={handleExportMetricsEventsCSV}
                         />
+
+                        <div data-tutorial-id="sim-map-canvas">
+                            <MaritimeCanvas2D
+                                gridSpacing={200}
+                                scenario={scenario}
+                                onToggleAnomaly={handleToggleAnomaly}
+                                drones={drones}
+                                selectedDroneIds={selectedDroneIds}
+                                onSelectDrones={select}
+                                onAddDronesToSelection={add}
+                                onToggleDroneSelection={toggle}
+                                onClearDroneSelection={clear}
+                                onMoveDrone={interactionLocked ? undefined : handleDronePositionChange}
+                                onSetWaypoint={interactionLocked ? undefined : handleSetWaypoint}
+                                showSensorRange={sensorsEnabled && showSensorRanges}
+                                sensorRangeMeters={sensorSettings.rangeMeters}
+                                voronoiCells={voronoiEnabled ? voronoiCells : []}
+                                coveragePlans={coveragePlans}
+                                fogOfWarEnabled={fogOfWarEnabled}
+                                scanValidationActive={scanValidationActive}
+                                alerts={alerts}
+                                {...canvasMetricsProps}
+                            />
+                        </div>
 
                         <div className="sim-side-panels">
                             <AlertPanel
                                 alerts={alerts}
-                                onAcknowledge={acknowledgeAlert}
-                                onAcknowledgeAll={acknowledgeAllAlerts}
+                                onAcknowledge={handleAcknowledgeAlert}
+                                onAcknowledgeAll={handleAcknowledgeAllAlerts}
                             />
 
-                            <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading">
+                            <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading" data-tutorial-id="sim-detection-log">
                                 <div className="badge" style={{marginBottom: 8}} id="detection-log-heading">
                                     <span className="badge-dot" aria-hidden="true"/> Detection Log
                                 </div>
@@ -1069,6 +1277,7 @@ export default function SimulationPage() {
                     <div className={`scenario-drawer ${drawerOpen ? "open" : "closed"}`}>
                         <div className="drawer-surface">
                             <button className="drawer-handle" onClick={toggleDrawer} aria-expanded={drawerOpen}
+                                    data-tutorial-id="sim-mission-controls"
                                     aria-controls="sim-drawer-body">
                                 <span style={{fontWeight: 700}}>Mission Controls</span>
                                 <span className="drawer-hint">{drawerOpen ? "Hide" : "Show"}</span>
@@ -1102,7 +1311,10 @@ export default function SimulationPage() {
                                                     alignItems: "flex-end",
                                                     flexWrap: "wrap"
                                                 }}>
-                                                    <button className="btn" onClick={handleSpawnDrone}>Spawn Drone
+                                                    <button className="btn" onClick={() => {
+                                                        handleSpawnDrone();
+                                                        recordManualMetric("Spawned a drone into the mission.", 1);
+                                                    }}>Spawn Drone
                                                     </button>
                                                     <button className="btn ghost"
                                                             onClick={() => select(drones.map((d) => d.id))}>Select All
@@ -1232,6 +1444,7 @@ export default function SimulationPage() {
                                                                                    ...d,
                                                                                    avoidanceOverride: checked
                                                                                } : d));
+                                                                               recordManualMetric(`${checked ? "Enabled" : "Disabled"} avoidance override for ${drone.callsign}.`, 1);
                                                                            }}/>
                                                                     <span
                                                                         className="drone-meta">Override avoidance</span>
@@ -1281,7 +1494,7 @@ export default function SimulationPage() {
                                                 flexWrap: "wrap",
                                                 alignItems: "center"
                                             }}>
-                                                <button className="btn" onClick={handleRunVoronoi}>Run Coverage</button>
+                                                <button className="btn" onClick={handleRunVoronoi} data-tutorial-id="sim-run-coverage">Run Coverage</button>
                                                 <button className="btn ghost" onClick={handleClearVoronoi}
                                                         disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear
                                                     Overlay
@@ -1311,7 +1524,7 @@ export default function SimulationPage() {
                                                 flexWrap: "wrap",
                                                 alignItems: "center"
                                             }}>
-                                                <button className="btn" onClick={handleStartCoverage}>Start Coverage
+                                                <button className="btn" onClick={handleStartCoverage} data-tutorial-id="sim-start-coverage">Start Coverage
                                                 </button>
                                                 <span className="field-hint">Generates boustrophedon sweeps.</span>
                                             </div>
@@ -1325,7 +1538,10 @@ export default function SimulationPage() {
                                                 <input
                                                     type="checkbox"
                                                     checked={manualInterventionEnabled}
-                                                    onChange={(e) => setManualInterventionEnabled(e.target.checked)}
+                                                    onChange={(e) => {
+                                                        setManualInterventionEnabled(e.target.checked);
+                                                        recordManualMetric(`${e.target.checked ? "Enabled" : "Disabled"} manual intervention mode.`, undefined, "coverage-command");
+                                                    }}
                                                     disabled={!coverageActive}
                                                 />
                                                 <span>Allow drone repositioning &amp; waypoints</span>

@@ -1,5 +1,6 @@
 import type React from "react";
 import {ThemeToggle} from "../ui/ThemeToggle";
+import {useTutorial} from "../../context/TutorialContext";
 
 type AppShellProps = {
     children: React.ReactNode;
@@ -7,6 +8,8 @@ type AppShellProps = {
 };
 
 export function AppShell({children, subtitle}: AppShellProps) {
+    const {setHelpOpen} = useTutorial();
+
     return (
         <div className="app-shell">
             <header className="toolbar" role="banner">
@@ -15,7 +18,16 @@ export function AppShell({children, subtitle}: AppShellProps) {
                     <span>BEACON</span>
                     {subtitle && <span className="brand-subtitle">— {subtitle}</span>}
                 </div>
-                <ThemeToggle />
+                <div className="toolbar-actions">
+                    <button
+                        className="btn ghost btn-sm toolbar-help-btn"
+                        onClick={() => setHelpOpen(true)}
+                        data-tutorial-id="toolbar-help"
+                    >
+                        Help
+                    </button>
+                    <ThemeToggle />
+                </div>
             </header>
             <main className="content" id="main-content" role="main">
                 {children}

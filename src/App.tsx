@@ -3,16 +3,20 @@ import {AnimatePresence} from "framer-motion";
 import LandingPage from "./pages/LandingPage";
 import SetupPage from "./pages/SetupPage";
 import SimulationPage from "./pages/SimulationPage";
+import TutorialRoot from "./components/tutorial/TutorialRoot";
 
 export default function App() {
     return (
-        <AnimatePresence mode="wait">
-            <Routes>
-                <Route path="/" element={<LandingPage/>}/>
-                <Route path="/setup" element={<SetupPage/>}/>
-                <Route path="/simulation" element={<SimulationPage/>}/>
-                <Route path="*" element={<Navigate to="/" replace/>}/>
-            </Routes>
-        </AnimatePresence>
+        <>
+            <AnimatePresence mode="wait">
+                <Routes>
+                    <Route path="/" element={<LandingPage/>}/>
+                    <Route path="/setup" element={<SetupPage/>}/>
+                    <Route path="/simulation" element={<SimulationPage/>}/>
+                    <Route path="*" element={<Navigate to="/" replace/>}/>
+                </Routes>
+            </AnimatePresence>
+            <TutorialRoot/>
+        </>
     );
 }

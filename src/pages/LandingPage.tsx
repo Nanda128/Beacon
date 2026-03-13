@@ -143,7 +143,7 @@ export default function LandingPage() {
                                 <h2 id={`cat-${cat}`} className="section-heading">
                                     {categoryLabels[cat]}
                                 </h2>
-                                <div className="preset-grid" role="list">
+                                <div className="preset-grid" role="list" data-tutorial-id="landing-preset-grid">
                                     {presets.map((preset) => (
                                         <button
                                             key={preset.id}
@@ -238,7 +238,7 @@ export default function LandingPage() {
                     </section>
 
                     <section className="landing-cta" aria-label="Begin">
-                        <button className="btn btn-large" onClick={handleBeginSetup}>
+                        <button className="btn btn-large" onClick={handleBeginSetup} data-tutorial-id="landing-begin-setup">
                             Begin Setup →
                         </button>
                     </section>

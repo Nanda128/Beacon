@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import {BrowserRouter} from "react-router-dom";
 import {ThemeProvider} from "./theme/ThemeProvider";
 import {MissionProvider} from "./context/MissionContext";
+import {TutorialProvider} from "./context/TutorialContext";
 import ErrorBoundary from "./components/ErrorBoundary";
 import {registerGlobalErrorHandlers} from "./utils/errorLogging";
 import App from "./App";
@@ -15,9 +16,11 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <BrowserRouter>
             <ThemeProvider>
                 <MissionProvider>
-                    <ErrorBoundary>
-                        <App/>
-                    </ErrorBoundary>
+                    <TutorialProvider>
+                        <ErrorBoundary>
+                            <App/>
+                        </ErrorBoundary>
+                    </TutorialProvider>
                 </MissionProvider>
             </ThemeProvider>
         </BrowserRouter>

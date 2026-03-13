@@ -4,6 +4,7 @@ import type {DroneState} from "../../domain/types/drone";
 import type {Alert} from "../../domain/types/alert";
 import type {VoronoiCell} from "./voronoi";
 import type {CoveragePlan} from "../../domain/coverage/planner";
+import type {CoverageHeatmapGrid} from "../../domain/types/metrics";
 import {anomalyTypeLabels, anomalyStyles} from "../../config/anomalies";
 import {alertSeverityStyles} from "../../config/alerts";
 import {adjustedGrid, screenFromWorld, type CameraState, type Size} from "./utils";
@@ -107,6 +108,51 @@ export const drawSectorBounds = (ctx: CanvasRenderingContext2D, size: Size, came
     }
     ctx.closePath();
     ctx.stroke();
+    ctx.restore();
+};
+
+export const drawCoverageHeatmap = (
+    ctx: CanvasRenderingContext2D,
+    size: Size,
+    camera: CameraState,
+    bounds: MaritimeScenario["sector"]["bounds"],
+    coverage: CoverageHeatmapGrid | undefined,
+) => {
+    if (!coverage || coverage.maxVisitCount <= 0 || coverage.totalCells === 0) return;
+
+    const {origin} = bounds;
+    const {cellSizeMeters, cols, rows, visits, maxVisitCount} = coverage;
+
+    ctx.save();
+    for (let row = 0; row < rows; row += 1) {
+        for (let col = 0; col < cols; col += 1) {
+            const index = row * cols + col;
+            const visitCount = visits[index];
+            if (visitCount <= 0) continue;
+
+            const intensity = visitCount / maxVisitCount;
+            const worldTopLeft = {
+                x: origin.x + col * cellSizeMeters,
+                y: origin.y + (row + 1) * cellSizeMeters,
+            };
+            const worldBottomRight = {
+                x: origin.x + (col + 1) * cellSizeMeters,
+                y: origin.y + row * cellSizeMeters,
+            };
+            const topLeft = screenFromWorld(worldTopLeft, size, camera);
+            const bottomRight = screenFromWorld(worldBottomRight, size, camera);
+            const hue = 165 - intensity * 35;
+            const alpha = 0.06 + intensity * 0.24;
+
+            ctx.fillStyle = `hsla(${hue}, 80%, 52%, ${alpha})`;
+            ctx.fillRect(
+                Math.min(topLeft.x, bottomRight.x),
+                Math.min(topLeft.y, bottomRight.y),
+                Math.abs(bottomRight.x - topLeft.x),
+                Math.abs(bottomRight.y - topLeft.y),
+            );
+        }
+    }
     ctx.restore();
 };
 

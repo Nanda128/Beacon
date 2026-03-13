@@ -21,6 +21,7 @@ export const lightTokens: Record<string, string> = {
 
     "--color-border": "#D1D5DB",
     "--color-border-subtle": "#E5E7EB",
+    "--color-border-strong": "#94A3B8",
 
     "--color-text": "#1E293B",
     "--color-text-secondary": "#475569",
@@ -70,6 +71,7 @@ export const darkTokens: Record<string, string> = {
 
     "--color-border": "rgba(255,255,255,0.10)",
     "--color-border-subtle": "rgba(255,255,255,0.06)",
+    "--color-border-strong": "rgba(255,255,255,0.22)",
 
     "--color-text": "#E2E8F0",
     "--color-text-secondary": "#CBD5E1",

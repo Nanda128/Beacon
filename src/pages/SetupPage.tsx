@@ -113,6 +113,7 @@ export default function SetupPage() {
                             </Field>
                             <Field label="Preset">
                                 <select className="field-input" value={selectedPreset}
+                                        data-tutorial-id="setup-preset-select"
                                         aria-label="Environment preset"
                                         onChange={(e) => {
                                             applyPreset(e.target.value);
@@ -183,7 +184,7 @@ export default function SetupPage() {
                             </Field>
                             <Field label=" " className="field" as="div">
                                 <div style={{display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap"}}>
-                                    <button className="btn" onClick={handleSpawnDrone}>Spawn Drone</button>
+                                    <button className="btn" onClick={handleSpawnDrone} data-tutorial-id="setup-spawn-drone">Spawn Drone</button>
                                     <button className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
                                         All
                                     </button>
@@ -297,7 +298,7 @@ export default function SetupPage() {
                     </section>
 
                     <section className="setup-cta" aria-label="Launch mission">
-                        <button className="btn btn-large btn-launch" onClick={handleLaunchMission}>
+                        <button className="btn btn-large btn-launch" onClick={handleLaunchMission} data-tutorial-id="setup-launch-mission">
                             Launch Mission
                         </button>
                     </section>
