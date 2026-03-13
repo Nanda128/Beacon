@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "name": "High Stress",
+  "seed": "STRESS-042",
+  "sector": {
+    "id": "STRESS-042-10000x10000",
+    "name": "High Stress",
+    "seed": "STRESS-042",
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -5000,
+        "y": -5000
+      },
+      "widthMeters": 10000,
+      "heightMeters": 10000
+    },
+    "conditions": {
+      "seaState": 5,
+      "windKts": 28,
+      "visibilityKm": 6,
+      "surfaceTempC": 15,
+      "description": "High sea state, strong wind, reduced visibility — multiple simultaneous alerts expected"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.020,
+      "detailScale": 0.090,
+      "baseColor": [
+        12,
+        48,
+        82
+      ],
+      "highlightColor": [
+        32,
+        100,
+        156
+      ],
+      "textureStrength": 0.82
+    }
+  },
+  "anomalies": {
+    "config": {
+      "person-in-water": {
+        "count": 6,
+        "detectionRadiusMeters": 220
+      },
+      "lifeboat": {
+        "count": 3,
+        "detectionRadiusMeters": 380
+      },
+      "debris-field": {
+        "count": 4,
+        "detectionRadiusMeters": 280
+      },
+      "false-positive": {
+        "count": 3,
+        "detectionRadiusMeters": 200
+      }
+    },
+    "items": []
+  },
+  "metadata": {
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "stress",
+      "high-workload"
+    ],
+    "notes": "16 anomalies across a 10 km² sector with severe weather. Recommended: 12 drones."
+  }
+}
+

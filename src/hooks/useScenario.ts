@@ -6,6 +6,7 @@ import {
 } from "../domain/environment/generator";
 import {downloadScenarioJSON, getPresetById, readScenarioFile} from "../data/scenarios";
 import type {AnomalySettings, MaritimeScenario} from "../domain/types/environment";
+import {logError} from "../utils/errorLogging";
 import {
     defaultAnomalyConfigOverride,
     defaultBoundsKm,
@@ -29,7 +30,7 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
     const [heightKm, setHeightKm] = useState(defaultBoundsKm.height);
     const [scenario, setScenario] = useState<MaritimeScenario>(initialScenario);
     const [anomalyConfig, setAnomalyConfig] = useState<AnomalySettings>(() => cloneAnomalyConfig(initialScenario.anomalies.config));
-    const [selectedPreset, setSelectedPreset] = useState("calm-bay");
+    const [selectedPreset, setSelectedPreset] = useState("simple");
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +66,7 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
         const preset = getPresetById(id);
         if (!preset) return;
         setSelectedPreset(id);
-        applyScenario(preset, `Loaded preset: ${preset.name}`);
+        applyScenario(preset.scenario, `Loaded preset: ${preset.scenario.name}`);
     }, [applyScenario]);
 
     const loadScenarioFile = useCallback(async (file: File) => {
@@ -73,6 +74,14 @@ export function useScenario({onScenarioReset}: UseScenarioOptions = {}) {
             const loaded = await readScenarioFile(file);
             applyScenario(loaded, `Loaded scenario from ${file.name}`);
         } catch (err) {
+            logError(err, {
+                origin: "scenario.load-file",
+                context: {
+                    fileName: file.name,
+                    fileSizeBytes: file.size,
+                    fileType: file.type,
+                },
+            });
             setError(err instanceof Error ? err.message : "Failed to load scenario");
         }
     }, [applyScenario]);

@@ -1,5 +1,6 @@
 import type {Vec2} from "./environment";
 import type {CoveragePlan} from "../coverage/planner";
+import type {CommsState} from "./comms";
 
 export type DroneStatus = "idle" | "launching" | "enroute" | "search" | "returning" | "landed" | "error";
 
@@ -29,6 +30,7 @@ export type DroneState = {
     emergencyReserveMinutes: number;
     swarmEnabled?: boolean;
     avoidanceOverride?: boolean;
+    comms?: CommsState;
 };
 
 export type SpawnPoint = {

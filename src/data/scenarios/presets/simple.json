@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "name": "Simple",
+  "seed": "SIMPLE-001",
+  "sector": {
+    "id": "SIMPLE-001-5000x5000",
+    "name": "Simple",
+    "seed": "SIMPLE-001",
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "bounds": {
+      "origin": {
+        "x": -2500,
+        "y": -2500
+      },
+      "widthMeters": 5000,
+      "heightMeters": 5000
+    },
+    "conditions": {
+      "seaState": 1,
+      "windKts": 5,
+      "visibilityKm": 20,
+      "surfaceTempC": 21,
+      "description": "Calm seas, light breeze — nominal SAR conditions"
+    },
+    "water": {
+      "tileSize": 256,
+      "noiseScale": 0.010,
+      "detailScale": 0.055,
+      "baseColor": [
+        16,
+        60,
+        96
+      ],
+      "highlightColor": [
+        38,
+        114,
+        176
+      ],
+      "textureStrength": 0.50
+    }
+  },
+  "anomalies": {
+    "config": {
+      "person-in-water": {
+        "count": 2,
+        "detectionRadiusMeters": 250
+      },
+      "lifeboat": {
+        "count": 1,
+        "detectionRadiusMeters": 420
+      },
+      "debris-field": {
+        "count": 0,
+        "detectionRadiusMeters": 300
+      },
+      "false-positive": {
+        "count": 0,
+        "detectionRadiusMeters": 200
+      }
+    },
+    "items": []
+  },
+  "metadata": {
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "labels": [
+      "preset",
+      "training",
+      "simple"
+    ],
+    "notes": "Nominal conditions with 3 anomalies. Recommended: 5 drones."
+  }
+}
+
