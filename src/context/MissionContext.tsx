@@ -29,8 +29,20 @@ import {
 import type {CoveragePlan} from "../domain/coverage/planner";
 import type {VoronoiCell} from "../components/canvas/voronoi";
 import {getPresetById} from "../data/scenarios";
+import type {MissionMetricsSession} from "../domain/types/metrics";
+import type {NasaTlxAssessment, NasaTlxPairwiseSelection, NasaTlxResponses} from "../domain/types/tlx";
+import {calculateWeightedNasaTlx, normalizePairwiseSelections} from "../domain/metrics/tlx";
 
-export type MissionPhase = "landing" | "setup" | "simulation";
+export type MissionPhase = "landing" | "setup" | "simulation" | "debrief";
+export type MissionEndReason = "manual-end" | "aborted" | "completed";
+
+export type PostMissionState = {
+    missionEndedAt?: number;
+    endReason?: MissionEndReason;
+    metricsSnapshot?: MissionMetricsSession;
+    nasaTlxOptIn: boolean | null;
+    nasaTlxAssessment?: NasaTlxAssessment;
+};
 
 type MissionContextValue = {
     phase: MissionPhase;
@@ -92,6 +104,15 @@ type MissionContextValue = {
     commsConfig: CommsConfig;
     setCommsConfig: React.Dispatch<React.SetStateAction<CommsConfig>>;
 
+    postMission: PostMissionState;
+    finalizeMission: (input: { metrics: MissionMetricsSession; endedAt?: number; endReason?: MissionEndReason }) => void;
+    setNasaTlxOptIn: (value: boolean) => void;
+    submitNasaTlxResponses: (input: {
+        responses: NasaTlxResponses;
+        pairwiseSelections: NasaTlxPairwiseSelection[];
+    }) => void;
+    clearPostMission: () => void;
+
     swarmEnabledGlobal: boolean;
     swarmParamsRef: React.MutableRefObject<SwarmBehaviourParams>;
     batteryWarningStateRef: React.MutableRefObject<Record<string, { thresholds: Set<number>; emergency: boolean }>>;
@@ -105,6 +126,14 @@ type MissionContextValue = {
 
 const MissionContext = createContext<MissionContextValue>(null!);
 export const useMission = () => useContext(MissionContext);
+
+const initialPostMissionState: PostMissionState = {
+    missionEndedAt: undefined,
+    endReason: undefined,
+    metricsSnapshot: undefined,
+    nasaTlxOptIn: null,
+    nasaTlxAssessment: undefined,
+};
 
 export function MissionProvider({children}: { children: React.ReactNode }) {
     const [phase, setPhase] = useState<MissionPhase>("landing");
@@ -161,6 +190,7 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
     const [manualInterventionEnabled, setManualInterventionEnabled] = useState(false);
     const [fogOfWarEnabled, setFogOfWarEnabled] = useState(false);
     const [commsConfig, setCommsConfig] = useState<CommsConfig>({...defaultCommsConfig});
+    const [postMission, setPostMission] = useState<PostMissionState>({...initialPostMissionState});
 
     const swarmParamsRef = useRef<SwarmBehaviourParams>({
         safetyDistanceMeters: defaultSafetyDistanceMeters,
@@ -355,6 +385,44 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         setMessage(`Prepared ${nextDrones.length} drones for preset ${preset.label}`);
     }, [clampToBounds, clear, computeEmergencyReserve, computeReturnMinutes, hub.position, resetDrones, seed, select, setMessage, swarmEnabledGlobal]);
 
+    const finalizeMission = useCallback((input: { metrics: MissionMetricsSession; endedAt?: number; endReason?: MissionEndReason }) => {
+        setPostMission({
+            missionEndedAt: input.endedAt ?? Date.now(),
+            endReason: input.endReason ?? "manual-end",
+            metricsSnapshot: input.metrics,
+            nasaTlxOptIn: null,
+            nasaTlxAssessment: undefined,
+        });
+    }, []);
+
+    const setNasaTlxOptIn = useCallback((value: boolean) => {
+        setPostMission((prev) => ({...prev, nasaTlxOptIn: value}));
+    }, []);
+
+    const submitNasaTlxResponses = useCallback((input: {
+        responses: NasaTlxResponses;
+        pairwiseSelections: NasaTlxPairwiseSelection[];
+    }) => {
+        const completedAt = Date.now();
+        const pairwiseSelections = normalizePairwiseSelections(input.pairwiseSelections);
+        const weighted = calculateWeightedNasaTlx(input.responses, pairwiseSelections);
+        setPostMission((prev) => ({
+            ...prev,
+            nasaTlxOptIn: true,
+            nasaTlxAssessment: {
+                completedAt,
+                mode: "weighted",
+                responses: input.responses,
+                pairwiseSelections,
+                result: weighted,
+            },
+        }));
+    }, []);
+
+    const clearPostMission = useCallback(() => {
+        setPostMission({...initialPostMissionState});
+    }, []);
+
     const value = useMemo<MissionContextValue>(() => ({
         phase, setPhase,
         scenario: scenarioHook,
@@ -382,6 +450,7 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         manualInterventionEnabled, setManualInterventionEnabled,
         fogOfWarEnabled, setFogOfWarEnabled,
         commsConfig, setCommsConfig,
+        postMission, finalizeMission, setNasaTlxOptIn, submitNasaTlxResponses, clearPostMission,
         swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,
@@ -397,6 +466,7 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         alertAudioEnabled, unacknowledgedAlertCount,
         manualInterventionEnabled, fogOfWarEnabled,
         commsConfig,
+        postMission, finalizeMission, setNasaTlxOptIn, submitNasaTlxResponses, clearPostMission,
         swarmEnabledGlobal,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,

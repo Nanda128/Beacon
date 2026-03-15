@@ -96,6 +96,7 @@ export default function SimulationPage() {
         spawnPoints, selectedSpawnPointId, setSelectedSpawnPointId,
         selectedDroneModelId, setSelectedDroneModelId,
         handleSpawnDrone, setPhase,
+        finalizeMission,
     } = mission;
 
     const {
@@ -1167,6 +1168,27 @@ export default function SimulationPage() {
         navigate("/setup");
     };
 
+    const handleEndMission = useCallback(() => {
+        const now = Date.now();
+        const currentAlerts = alertsRef.current;
+        const finalized = sampleMissionMetrics(metrics, {
+            now,
+            scenario: scenarioRef.current,
+            drones: dronesRef.current,
+            unacknowledgedAlerts: currentAlerts.filter((alert) => !alert.acknowledged).length,
+            criticalAlertCount: currentAlerts.filter((alert) => !alert.acknowledged && alert.severity === "critical").length,
+            manualInterventionEnabled: manualInterventionEnabledRef.current,
+            sensorRangeMeters: sensorSettings.rangeMeters,
+        });
+        setMetrics(finalized);
+        updateMetricsCollectionEnabled(false);
+        setCoverageActive(false);
+        setManualInterventionEnabled(false);
+        finalizeMission({metrics: finalized, endedAt: now, endReason: "manual-end"});
+        setPhase("debrief");
+        navigate("/mission-end");
+    }, [finalizeMission, metrics, navigate, sensorSettings.rangeMeters, setCoverageActive, setManualInterventionEnabled, setPhase, updateMetricsCollectionEnabled]);
+
     const canvasMetricsProps = {
         coverageHeatmap: metrics.coverage,
         metricsSummary: metrics.summary,
@@ -1178,7 +1200,9 @@ export default function SimulationPage() {
                 <div className="simulation-container content-with-drawer">
                     <nav className="setup-nav" aria-label="Mission navigation">
                         <button className="btn ghost btn-sm" onClick={handleBackToSetup}>← Back to Setup</button>
-                        <div className="sim-status-bar" role="status" aria-live="polite" data-tutorial-id="sim-status-bar">
+                        <button className="btn btn-sm" onClick={handleEndMission}>End Mission</button>
+                        <div className="sim-status-bar" role="status" aria-live="polite"
+                             data-tutorial-id="sim-status-bar">
                             <span><strong>Drones</strong> {drones.length}</span>
                             <span><strong>Detected</strong> {scenario.anomalies.items.filter((a) => a.detected).length}/{scenario.anomalies.items.length}</span>
                             <span><strong>Sea state</strong> {sectorMeta.conditions.seaState}</span>
@@ -1249,7 +1273,8 @@ export default function SimulationPage() {
                                 onAcknowledgeAll={handleAcknowledgeAllAlerts}
                             />
 
-                            <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading" data-tutorial-id="sim-detection-log">
+                            <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading"
+                                 data-tutorial-id="sim-detection-log">
                                 <div className="badge" style={{marginBottom: 8}} id="detection-log-heading">
                                     <span className="badge-dot" aria-hidden="true"/> Detection Log
                                 </div>
@@ -1494,7 +1519,9 @@ export default function SimulationPage() {
                                                 flexWrap: "wrap",
                                                 alignItems: "center"
                                             }}>
-                                                <button className="btn" onClick={handleRunVoronoi} data-tutorial-id="sim-run-coverage">Run Coverage</button>
+                                                <button className="btn" onClick={handleRunVoronoi}
+                                                        data-tutorial-id="sim-run-coverage">Run Coverage
+                                                </button>
                                                 <button className="btn ghost" onClick={handleClearVoronoi}
                                                         disabled={!voronoiEnabled || voronoiCells.length === 0}>Clear
                                                     Overlay
@@ -1524,7 +1551,8 @@ export default function SimulationPage() {
                                                 flexWrap: "wrap",
                                                 alignItems: "center"
                                             }}>
-                                                <button className="btn" onClick={handleStartCoverage} data-tutorial-id="sim-start-coverage">Start Coverage
+                                                <button className="btn" onClick={handleStartCoverage}
+                                                        data-tutorial-id="sim-start-coverage">Start Coverage
                                                 </button>
                                                 <span className="field-hint">Generates boustrophedon sweeps.</span>
                                             </div>

@@ -1,5 +1,6 @@
 import type {MissionMetricsExport, MissionMetricsSession} from "../domain/types/metrics";
 import {roundMetricsSession} from "../domain/metrics/collector";
+import type {NasaTlxAssessment} from "../domain/types/tlx";
 
 const escapeCsv = (value: unknown) => {
     const stringValue = value == null ? "" : String(value);
@@ -66,6 +67,20 @@ export function createMissionMetricsExport(session: MissionMetricsSession): Miss
     return {
         exportedAt: new Date().toISOString(),
         session: roundMetricsSession(session),
+    };
+}
+
+export type CombinedDebriefExport = {
+    exportedAt: string;
+    mission: MissionMetricsExport;
+    nasaTlx?: NasaTlxAssessment;
+};
+
+export function createCombinedDebriefExport(session: MissionMetricsSession, nasaTlx?: NasaTlxAssessment): CombinedDebriefExport {
+    return {
+        exportedAt: new Date().toISOString(),
+        mission: createMissionMetricsExport(session),
+        nasaTlx,
     };
 }
 
@@ -160,5 +175,43 @@ export function downloadMissionMetricsEventsCSV(session: MissionMetricsSession) 
     });
 
     downloadBlob(rowsToCsv(rows), `metrics-events-${session.sessionId}.csv`, "text/csv;charset=utf-8");
+}
+
+export function downloadCombinedDebriefJSON(session: MissionMetricsSession, nasaTlx?: NasaTlxAssessment) {
+    const payload = createCombinedDebriefExport(session, nasaTlx);
+    downloadBlob(
+        JSON.stringify(payload, null, 2),
+        `debrief-report-${session.sessionId}.json`,
+        "application/json",
+    );
+}
+
+export function downloadCombinedDebriefCSV(session: MissionMetricsSession, nasaTlx?: NasaTlxAssessment) {
+    const rows: unknown[][] = [["section", "metric", "value"]];
+
+    summaryRows(session).slice(1).forEach(([metric, value]) => {
+        rows.push(["mission", metric, value]);
+    });
+
+    if (!nasaTlx) {
+        rows.push(["nasa-tlx", "status", "skipped"]);
+    } else {
+        rows.push(["nasa-tlx", "status", "completed"]);
+        rows.push(["nasa-tlx", "mode", nasaTlx.mode]);
+        rows.push(["nasa-tlx", "completedAt", new Date(nasaTlx.completedAt).toISOString()]);
+        rows.push(["nasa-tlx", "weightedScore", nasaTlx.result.weightedScore]);
+        rows.push(["nasa-tlx", "weightedBand", nasaTlx.result.band]);
+        rows.push(["nasa-tlx", "pairCount", nasaTlx.result.pairCount]);
+
+        nasaTlx.result.dimensions.forEach((dimension) => {
+            rows.push(["nasa-tlx-dimension", dimension.id, dimension.value]);
+        });
+
+        nasaTlx.result.weights.forEach((weight) => {
+            rows.push(["nasa-tlx-weight", weight.id, weight.weight]);
+        });
+    }
+
+    downloadBlob(rowsToCsv(rows), `debrief-report-${session.sessionId}.csv`, "text/csv;charset=utf-8");
 }
 

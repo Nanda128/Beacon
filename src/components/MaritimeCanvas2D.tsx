@@ -98,8 +98,7 @@ export default function MaritimeCanvas2D({
     const selectionBoxRef = useRef<{ start: Vec2; end: Vec2 } | null>(null);
     const [selectionBox, setSelectionBox] = useState<{ start: Vec2; end: Vec2 } | null>(null);
     const waterPatternRef = useRef<CanvasPattern | null>(null);
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [toolbarInsetPx, setToolbarInsetPx] = useState(68);
+
 
     const computeScale = useCallback(() => computeMinScale(size, scenario.sector.bounds), [size, scenario.sector.bounds]);
 
@@ -111,30 +110,10 @@ export default function MaritimeCanvas2D({
     }, [computeScale]);
 
     const fitCameraToSector = useCallback((padding?: number) => {
-        const safePadding = padding ?? (isExpanded ? 64 : 48);
+        const safePadding = padding ?? 48;
         const next = fitCameraToBounds(size, scenario.sector.bounds, safePadding);
         if (next) setCameraState(next);
-    }, [isExpanded, scenario.sector.bounds, setCameraState, size]);
-
-    const toggleExpanded = () => {
-        setIsExpanded((prev) => !prev);
-    };
-
-    useEffect(() => {
-        const toolbar = document.querySelector<HTMLElement>(".toolbar");
-        const updateInset = () => {
-            const toolbarHeight = toolbar?.getBoundingClientRect().height ?? 56;
-            setToolbarInsetPx(Math.max(64, Math.ceil(toolbarHeight) + 12));
-        };
-        updateInset();
-        window.addEventListener("resize", updateInset);
-        const observer = toolbar ? new ResizeObserver(updateInset) : null;
-        if (observer && toolbar) observer.observe(toolbar);
-        return () => {
-            window.removeEventListener("resize", updateInset);
-            observer?.disconnect();
-        };
-    }, []);
+    }, [scenario.sector.bounds, setCameraState, size]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -290,16 +269,6 @@ export default function MaritimeCanvas2D({
         draggingDroneIdRef.current = null;
     };
 
-    const handleWheel = useCallback((event: WheelEvent) => {
-        if (isExpanded) event.preventDefault();
-    }, [isExpanded]);
-
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.addEventListener("wheel", handleWheel, {passive: false});
-        return () => canvas.removeEventListener("wheel", handleWheel);
-    }, [handleWheel]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -314,14 +283,6 @@ export default function MaritimeCanvas2D({
         fitCameraToSector();
     }, [fitCameraToSector, scenario.sector.bounds.heightMeters, scenario.sector.bounds.origin.x, scenario.sector.bounds.origin.y, scenario.sector.bounds.widthMeters, scenario.seed, size.height, size.width]);
 
-    useEffect(() => {
-        if (!isExpanded) return;
-        const previousOverflow = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
-        return () => {
-            document.body.style.overflow = previousOverflow;
-        };
-    }, [isExpanded]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -378,21 +339,13 @@ export default function MaritimeCanvas2D({
         return () => document.removeEventListener("pointerdown", handleGlobalPointerDown);
     }, [onClearDroneSelection]);
 
-    const expandedTop = toolbarInsetPx;
-    const expandedWrapperStyle = isExpanded ? {top: expandedTop, right: 12, bottom: 12, left: 12} : undefined;
-    const expandedBackdropStyle = isExpanded ? {top: expandedTop} : undefined;
-
     return (
         <>
-            {isExpanded && <div className="canvas-fullscreen-backdrop" style={expandedBackdropStyle} onClick={toggleExpanded}/>}
             <div className="panel-card">
                 <div className="badge" style={{marginBottom: 10}}>
                     <span className="badge-dot"/> 2D canvas
                 </div>
-                <div ref={containerRef} className={`canvas-wrapper ${isExpanded ? "expanded" : ""}`} style={expandedWrapperStyle}>
-                    <button className="expand-button" onClick={toggleExpanded}>
-                        {isExpanded ? "Exit full view" : "Full view"}
-                    </button>
+                <div ref={containerRef} className="canvas-wrapper">
                     <canvas
                         ref={canvasRef}
                         onPointerDown={handlePointerDown}

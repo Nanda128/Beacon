@@ -238,7 +238,8 @@ export default function LandingPage() {
                     </section>
 
                     <section className="landing-cta" aria-label="Begin">
-                        <button className="btn btn-large" onClick={handleBeginSetup} data-tutorial-id="landing-begin-setup">
+                        <button className="btn btn-large" onClick={handleBeginSetup}
+                                data-tutorial-id="landing-begin-setup">
                             Begin Setup →
                         </button>
                     </section>

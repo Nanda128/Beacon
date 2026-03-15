@@ -29,6 +29,7 @@ export default function SetupPage() {
         showSensorRanges, setShowSensorRanges,
         handleSensorSettingChange,
         coverageOverlap, setCoverageOverlap,
+        clearPostMission,
         setPhase,
     } = mission;
 
@@ -65,6 +66,11 @@ export default function SetupPage() {
         event.target.value = "";
     };
 
+    const handleDeleteSelectedDrones = () => {
+        setDrones((prev) => prev.filter((d) => !selectedDroneIds.includes(d.id)));
+        clear();
+    };
+
     const handleDroneSpeedChange = (id: string, speedKts: number) => {
         setDrones((prev) => prev.map((drone) => drone.id === id ? {
             ...drone,
@@ -74,6 +80,7 @@ export default function SetupPage() {
     };
 
     const handleLaunchMission = () => {
+        clearPostMission();
         setPhase("simulation");
         navigate("/simulation");
     };
@@ -184,11 +191,21 @@ export default function SetupPage() {
                             </Field>
                             <Field label=" " className="field" as="div">
                                 <div style={{display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap"}}>
-                                    <button className="btn" onClick={handleSpawnDrone} data-tutorial-id="setup-spawn-drone">Spawn Drone</button>
+                                    <button className="btn" onClick={handleSpawnDrone}
+                                            data-tutorial-id="setup-spawn-drone">Spawn Drone
+                                    </button>
                                     <button className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
                                         All
                                     </button>
                                     <button className="btn ghost" onClick={clear}>Deselect All</button>
+                                    <button
+                                        className="btn ghost danger"
+                                        onClick={handleDeleteSelectedDrones}
+                                        disabled={selectedDroneIds.length === 0}
+                                        aria-label="Delete selected drones"
+                                    >
+                                        Delete Selected
+                                    </button>
                                 </div>
                             </Field>
                         </ControlGrid>
@@ -298,7 +315,8 @@ export default function SetupPage() {
                     </section>
 
                     <section className="setup-cta" aria-label="Launch mission">
-                        <button className="btn btn-large btn-launch" onClick={handleLaunchMission} data-tutorial-id="setup-launch-mission">
+                        <button className="btn btn-large btn-launch" onClick={handleLaunchMission}
+                                data-tutorial-id="setup-launch-mission">
                             Launch Mission
                         </button>
                     </section>
