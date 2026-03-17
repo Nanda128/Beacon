@@ -43,6 +43,7 @@ export const maritimeScenarioSchema = {
                     properties: {
                         seaState: {type: "number"},
                         windKts: {type: "number"},
+                        windDirectionDeg: {type: "number"},
                         visibilityKm: {type: "number"},
                         surfaceTempC: {type: "number"},
                         description: {type: "string"},

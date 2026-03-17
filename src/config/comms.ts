@@ -1,14 +1,10 @@
 /**
- * Default comms degradation configuration.
+ * Values derived from Zulkifley et al. (2021): LTE-powered UAV measurements:
+ * C2 latency requirement: < 50 ms
+ * Measured max latency increase: 94 ms at 170 m height
+ * C2 packet error rate requirement: < 0.1%
  *
- * Values derived from:
- *   Zulkifley et al. (2021) — LTE-powered UAV measurements:
- *     - C2 latency requirement: < 50 ms
- *     - Measured max latency increase: 94 ms at 170 m height
- *     - C2 packet error rate requirement: < 0.1%
- *
- *   Degradation distances calibrated to typical maritime SAR sector
- *   sizes (3–5 km). Starts at 1500 m, full degradation at 4000 m.
+ * Degradation distances calibrated to typical maritime SAR sector sizes (3–5 km). Starts at 1500 m, full degradation at 4000 m.
  */
 
 import type {CommsConfig} from "../domain/types/comms";

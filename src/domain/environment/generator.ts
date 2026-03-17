@@ -198,11 +198,15 @@ export function generateSector(params: GeneratorParams): MaritimeScenario {
 
     const seaStateNoise = rng();
     const windNoise = rng();
+    const windDirectionNoise = rng();
     const visibilityNoise = rng();
+    const seaState = Math.round(clamp(lerp(1, 6, seaStateNoise), 0, 9));
+    const windKts = Math.round(lerp(3, 38, windNoise));
 
     const conditions: EnvironmentalConditions = {
-        seaState: Math.round(clamp(lerp(1, 6, seaStateNoise), 0, 9)),
-        windKts: Math.round(lerp(3, 38, windNoise)),
+        seaState,
+        windKts,
+        windDirectionDeg: Math.round(lerp(0, 359, windDirectionNoise)),
         visibilityKm: Math.round(lerp(4, 30, visibilityNoise)),
         surfaceTempC: Math.round(lerp(12, 28, rng())),
         description: pick([
@@ -215,11 +219,15 @@ export function generateSector(params: GeneratorParams): MaritimeScenario {
         ], rng),
     };
 
+    const seaStateFactor = clamp(seaState / 9, 0, 1);
+    const windFactor = clamp(windKts / 40, 0, 1);
+    const roughness = clamp(seaStateFactor * 0.65 + windFactor * 0.35, 0, 1);
+
     const water: WaterSettings = {
         ...defaultWaterSettings,
-        textureStrength: clamp(0.55 + rng() * 0.3, 0.4, 0.85),
-        noiseScale: clamp(0.01 + rng() * 0.01, 0.008, 0.022),
-        detailScale: clamp(0.05 + rng() * 0.03, 0.045, 0.09),
+        textureStrength: clamp(0.48 + roughness * 0.34 + rng() * 0.08, 0.4, 0.92),
+        noiseScale: clamp(0.008 + roughness * 0.01 + rng() * 0.003, 0.008, 0.024),
+        detailScale: clamp(0.044 + roughness * 0.04 + rng() * 0.008, 0.04, 0.1),
         baseColor: defaultWaterSettings.baseColor,
         highlightColor: defaultWaterSettings.highlightColor,
     };
@@ -344,6 +352,9 @@ export function validateScenario(payload: any): MaritimeScenario {
         conditions: {
             seaState: Number(sector.conditions.seaState ?? 0),
             windKts: Number(sector.conditions.windKts ?? 0),
+            windDirectionDeg: Number.isFinite(Number(sector.conditions.windDirectionDeg))
+                ? ((Number(sector.conditions.windDirectionDeg) % 360) + 360) % 360
+                : undefined,
             visibilityKm: Number(sector.conditions.visibilityKm ?? 0),
             surfaceTempC: Number(sector.conditions.surfaceTempC ?? 0),
             description: sector.conditions.description,

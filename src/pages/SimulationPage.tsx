@@ -52,6 +52,12 @@ import {
     downloadMissionMetricsTimelineCSV,
 } from "../utils/metricsExport";
 import {logError} from "../utils/errorLogging";
+import {
+    computeEnvironmentalBatteryDrainMultiplier,
+    computeEnvironmentalFalsePositiveMultiplier,
+    computeEnvironmentalSensorMultiplier,
+    computeWindAdjustedSpeedKts,
+} from "../domain/environment/effects";
 
 const commAlertBandRank: Record<CommAlertBand, number> = {
     healthy: 0,
@@ -60,6 +66,8 @@ const commAlertBandRank: Record<CommAlertBand, number> = {
     critical: 3,
     lost: 4,
 };
+
+const playbackSpeeds = [1, 2, 4] as const;
 
 /**
  * Simulation Page: real-time mission execution view.
@@ -107,12 +115,18 @@ export default function SimulationPage() {
 
     const {select, add, toggle, clear} = droneSelection;
     const lastFrameRef = useRef<number | null>(null);
+    const simNowRef = useRef(Date.now());
+    const lastSensorTickSimRef = useRef<number | null>(null);
     const scenarioRef = useRef(scenario);
     const dronesRef = useRef(drones);
     const alertsRef = useRef(alerts);
     const manualInterventionEnabledRef = useRef(manualInterventionEnabled);
     const [metrics, setMetrics] = useState<MissionMetricsSession>(() => createMissionMetricsSession(scenario));
     const [metricsCollectionEnabled, setMetricsCollectionEnabled] = useState(true);
+    const [isPaused, setIsPaused] = useState(false);
+    const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
+    const isPausedRef = useRef(false);
+    const simulationSpeedRef = useRef(1);
     const metricsCollectionEnabledRef = useRef(true);
     const {playForAlerts} = useAlertAudio(alertAudioEnabled);
 
@@ -128,6 +142,15 @@ export default function SimulationPage() {
     useEffect(() => {
         manualInterventionEnabledRef.current = manualInterventionEnabled;
     }, [manualInterventionEnabled]);
+    useEffect(() => {
+        isPausedRef.current = isPaused;
+        if (isPaused) {
+            lastFrameRef.current = null;
+        }
+    }, [isPaused]);
+    useEffect(() => {
+        simulationSpeedRef.current = simulationSpeed;
+    }, [simulationSpeed]);
     const updateMetricsCollectionEnabled = useCallback((enabled: boolean) => {
         metricsCollectionEnabledRef.current = enabled;
         setMetricsCollectionEnabled(enabled);
@@ -135,6 +158,11 @@ export default function SimulationPage() {
     useEffect(() => {
         setMetrics(createMissionMetricsSession(scenario));
         updateMetricsCollectionEnabled(true);
+        simNowRef.current = Date.now();
+        lastFrameRef.current = null;
+        lastSensorTickSimRef.current = null;
+        setIsPaused(false);
+        setSimulationSpeed(1);
     }, [scenario.name, scenario.seed, scenario.sector.createdAt, updateMetricsCollectionEnabled]);
 
     const appendLogWithMetrics = useCallback((entries: DetectionLogEntry[]) => {
@@ -236,7 +264,20 @@ export default function SimulationPage() {
     }, [commsConfig.enabled, drones]);
 
     const [drawerOpen, setDrawerOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 960 : true);
+    const [mapControlsOpen, setMapControlsOpen] = useState(false);
     const toggleDrawer = () => setDrawerOpen((prev) => !prev);
+    const toggleMapControls = () => setMapControlsOpen((prev) => !prev);
+    const handleTogglePause = () => {
+        setIsPaused((prev) => !prev);
+    };
+    const handleFastForward = () => {
+        setSimulationSpeed((prev) => {
+            const idx = playbackSpeeds.indexOf(prev as (typeof playbackSpeeds)[number]);
+            const nextSpeed = playbackSpeeds[(idx + 1) % playbackSpeeds.length];
+            setMessage(`Simulation speed: ${nextSpeed}x`);
+            return nextSpeed;
+        });
+    };
 
     const [scanValidationActive, setScanValidationActive] = useState(false);
     const [activeCoverageDroneIds, setActiveCoverageDroneIds] = useState<string[]>([]);
@@ -395,6 +436,36 @@ export default function SimulationPage() {
         return Math.max(5, Math.round(raw * 100) / 100);
     }, [coverageOverlap, sensorSettings.rangeMeters]);
 
+    const environmentEffects = useMemo(() => {
+        const conditions = scenario.sector.conditions;
+        const sensorMultiplier = computeEnvironmentalSensorMultiplier(conditions);
+        const batteryDrainMultiplier = computeEnvironmentalBatteryDrainMultiplier(conditions);
+        const airborne = drones.filter((drone) => drone.status !== "landed" && drone.speedKts > 0);
+
+        const windDeltaPct = airborne.length === 0
+            ? 0
+            : airborne.reduce((sum, drone) => {
+                const {effectiveSpeedKts} = computeWindAdjustedSpeedKts(drone.speedKts, drone.headingDeg, conditions);
+                const baseSpeed = Math.max(0.1, drone.speedKts);
+                return sum + ((effectiveSpeedKts / baseSpeed) - 1) * 100;
+            }, 0) / airborne.length;
+
+        const windState = airborne.length === 0
+            ? "No active drones"
+            : windDeltaPct >= 1
+                ? "Assist"
+                : windDeltaPct <= -1
+                    ? "Headwind"
+                    : "Neutral";
+
+        return {
+            sensorPct: sensorMultiplier * 100,
+            batteryPct: batteryDrainMultiplier * 100,
+            windDeltaPct,
+            windState,
+        };
+    }, [drones, scenario.sector.conditions]);
+
     const recomputeVoronoi = useCallback(() => {
         const cells = computeVoronoiCells(drones, scenario.sector.bounds, selectedDroneIds);
         setVoronoiCells(cells);
@@ -525,8 +596,8 @@ export default function SimulationPage() {
     useEffect(() => {
         if (!metricsCollectionEnabled) return;
         const interval = window.setInterval(() => {
-            if (!metricsCollectionEnabledRef.current) return;
-            const now = Date.now();
+            if (!metricsCollectionEnabledRef.current || isPausedRef.current) return;
+            const now = simNowRef.current;
             const currentAlerts = alertsRef.current;
             setMetrics((prev) => sampleMissionMetrics(prev, {
                 now,
@@ -547,15 +618,24 @@ export default function SimulationPage() {
         const step = (timestamp: number) => {
             try {
                 if (lastFrameRef.current === null) lastFrameRef.current = timestamp;
-                const dtSeconds = (timestamp - lastFrameRef.current) / 1000;
+                const elapsedMs = timestamp - lastFrameRef.current;
                 lastFrameRef.current = timestamp;
+                if (isPausedRef.current) {
+                    raf = requestAnimationFrame(step);
+                    return;
+                }
+                const simulatedElapsedMs = elapsedMs * simulationSpeedRef.current;
+                const dtSeconds = simulatedElapsedMs / 1000;
                 const events: DetectionLogEntry[] = [];
                 const commTransitionAlerts: Alert[] = [];
-                const now = Date.now();
+                const now = simNowRef.current + simulatedElapsedMs;
+                simNowRef.current = now;
                 const bounds = scenario.sector.bounds;
                 const swarmParams = swarmParamsRef.current;
                 const baseDrones = dronesRef.current;
                 const cc = commsConfigRef.current;
+                const envConditions = scenarioRef.current.sector.conditions;
+                const batteryDrainMultiplier = computeEnvironmentalBatteryDrainMultiplier(envConditions);
                 const swarmAdjustments = swarmEnabledGlobal ? computeSwarmAdjustments(baseDrones, swarmParams, bounds, dtSeconds) : {};
 
                 if (cc.enabled) {
@@ -703,7 +783,7 @@ export default function SimulationPage() {
                         remainingQueue = rest;
                     }
                     const activeWaypoint = target ?? remainingQueue[0];
-                    const drainMinutes = dtSeconds / 60;
+                    const drainMinutes = (dtSeconds / 60) * batteryDrainMultiplier;
                     const stillFlying = drone.status !== "landed";
                     const batteryMinutesRemaining = Math.max(0, drone.batteryMinutesRemaining - (stillFlying ? drainMinutes : 0));
                     const batteryPct = Math.max(0, Math.min(100, (batteryMinutesRemaining / drone.batteryLifeMinutes) * 100));
@@ -778,16 +858,6 @@ export default function SimulationPage() {
                         return drone;
                     }
 
-                    const speedMs = drone.speedKts * 0.514444;
-                    if (speedMs <= 0) return {
-                        ...drone,
-                        batteryMinutesRemaining,
-                        batteryPct,
-                        status: statusBase,
-                        returnMinutesRequired,
-                        emergencyReserveMinutes,
-                        comms,
-                    };
                     const dx = target.x - drone.position.x;
                     const dy = target.y - drone.position.y;
                     const distance = Math.hypot(dx, dy);
@@ -798,6 +868,17 @@ export default function SimulationPage() {
                         if (headingDeg > 180) headingDeg -= 360;
                         if (headingDeg <= -180) headingDeg += 360;
                     }
+                    const {effectiveSpeedKts} = computeWindAdjustedSpeedKts(drone.speedKts, headingDeg, envConditions);
+                    const speedMs = effectiveSpeedKts * 0.514444;
+                    if (speedMs <= 0) return {
+                        ...drone,
+                        batteryMinutesRemaining,
+                        batteryPct,
+                        status: statusBase,
+                        returnMinutesRequired,
+                        emergencyReserveMinutes,
+                        comms,
+                    };
                     const dirX = Math.cos((headingDeg * Math.PI) / 180);
                     const dirY = Math.sin((headingDeg * Math.PI) / 180);
                     const maxStep = speedMs * dtSeconds;
@@ -864,7 +945,7 @@ export default function SimulationPage() {
                         hub: hub.position,
                         existingAlerts: alertsRef.current,
                         newLogEntries: events,
-                        now: Date.now(),
+                        now,
                     });
                     if (newAlerts.length > 0) {
                         appendAlertsWithMetrics(newAlerts);
@@ -900,11 +981,17 @@ export default function SimulationPage() {
         if (!sensorsEnabled) return;
         const interval = window.setInterval(() => {
             try {
-                const now = Date.now();
+                if (isPausedRef.current) return;
+                const now = simNowRef.current;
+                const previousSensorTick = lastSensorTickSimRef.current ?? now;
+                const elapsedSensorSimMs = Math.max(0, now - previousSensorTick);
+                lastSensorTickSimRef.current = now;
                 const currentScenario = scenarioRef.current;
                 const currentDrones = dronesRef.current;
                 const cc = commsConfigRef.current;
                 if (!currentScenario || currentDrones.length === 0) return;
+                const environmentalSensorMultiplier = computeEnvironmentalSensorMultiplier(currentScenario.sector.conditions);
+                const environmentalFalsePositiveMultiplier = computeEnvironmentalFalsePositiveMultiplier(currentScenario.sector.conditions);
                 let updatedItems = currentScenario.anomalies.items;
                 let changed = false;
                 const events: DetectionLogEntry[] = [];
@@ -924,7 +1011,7 @@ export default function SimulationPage() {
                         if (distance > range) return;
                         if (anomaly.type !== "false-positive") opportunityAnomalyIds.add(anomaly.id);
                         const rawConfidence = detectionProbability(distance);
-                        const confidence = rawConfidence * sensorMultiplier;
+                        const confidence = Math.min(1, Math.max(0, rawConfidence * sensorMultiplier * environmentalSensorMultiplier));
 
                         if (isDisconnected) {
                             if (!offlineBufferRef.current[drone.id]) {
@@ -1038,7 +1125,9 @@ export default function SimulationPage() {
                     });
 
                     if (!isDisconnected) {
-                        const falsePositiveChance = sensorSettings.falsePositiveRatePerMinute * (sensorSettings.checkIntervalMs / 60000);
+                        const falsePositiveChance = sensorSettings.falsePositiveRatePerMinute
+                            * (elapsedSensorSimMs / 60000)
+                            * environmentalFalsePositiveMultiplier;
                         if (Math.random() < falsePositiveChance) {
                             const angle = Math.random() * Math.PI * 2;
                             const radius = Math.random() * range * 0.9;
@@ -1126,7 +1215,7 @@ export default function SimulationPage() {
                             hub: hub.position,
                             existingAlerts: alertsRef.current,
                             newLogEntries: immediateEvents,
-                            now: Date.now(),
+                            now,
                         });
                         if (newAlerts.length > 0) {
                             appendAlertsWithMetrics(newAlerts);
@@ -1141,7 +1230,7 @@ export default function SimulationPage() {
                         hub: hub.position,
                         existingAlerts: alertsRef.current,
                         newLogEntries: events,
-                        now: Date.now(),
+                        now,
                     });
                     if (newAlerts.length > 0) {
                         appendAlertsWithMetrics(newAlerts);
@@ -1169,7 +1258,8 @@ export default function SimulationPage() {
     };
 
     const handleEndMission = useCallback(() => {
-        const now = Date.now();
+        const now = simNowRef.current;
+        const endedAt = Date.now();
         const currentAlerts = alertsRef.current;
         const finalized = sampleMissionMetrics(metrics, {
             now,
@@ -1184,7 +1274,7 @@ export default function SimulationPage() {
         updateMetricsCollectionEnabled(false);
         setCoverageActive(false);
         setManualInterventionEnabled(false);
-        finalizeMission({metrics: finalized, endedAt: now, endReason: "manual-end"});
+        finalizeMission({metrics: finalized, endedAt, endReason: "manual-end"});
         setPhase("debrief");
         navigate("/mission-end");
     }, [finalizeMission, metrics, navigate, sensorSettings.rangeMeters, setCoverageActive, setManualInterventionEnabled, setPhase, updateMetricsCollectionEnabled]);
@@ -1200,12 +1290,14 @@ export default function SimulationPage() {
                 <div className="simulation-container content-with-drawer">
                     <nav className="setup-nav" aria-label="Mission navigation">
                         <button className="btn ghost btn-sm" onClick={handleBackToSetup}>← Back to Setup</button>
-                        <button className="btn btn-sm" onClick={handleEndMission}>End Mission</button>
                         <div className="sim-status-bar" role="status" aria-live="polite"
                              data-tutorial-id="sim-status-bar">
                             <span><strong>Drones</strong> {drones.length}</span>
                             <span><strong>Detected</strong> {scenario.anomalies.items.filter((a) => a.detected).length}/{scenario.anomalies.items.length}</span>
                             <span><strong>Sea state</strong> {sectorMeta.conditions.seaState}</span>
+                            <span><strong>Wind</strong> {sectorMeta.conditions.windKts} kts @{sectorMeta.conditions.windDirectionDeg ?? 0}deg</span>
+                            <span><strong>Visibility</strong> {sectorMeta.conditions.visibilityKm} km</span>
+                            <span><strong>Playback</strong> {isPaused ? "Paused" : `${simulationSpeed}x`}</span>
                             {commsConfig.enabled && drones.some((d) => d.comms) && (() => {
                                 const connected = drones.filter((d) => d.comms?.connected).length;
                                 const total = drones.filter((d) => d.comms).length;
@@ -1242,7 +1334,7 @@ export default function SimulationPage() {
                             onExportEventsCSV={handleExportMetricsEventsCSV}
                         />
 
-                        <div data-tutorial-id="sim-map-canvas">
+                        <div className="sim-map-overlay-host" data-tutorial-id="sim-map-canvas">
                             <MaritimeCanvas2D
                                 gridSpacing={200}
                                 scenario={scenario}
@@ -1264,6 +1356,25 @@ export default function SimulationPage() {
                                 alerts={alerts}
                                 {...canvasMetricsProps}
                             />
+                            <div
+                                className={`sim-map-controls-overlay ${mapControlsOpen ? "open" : "closed"}`}
+                                role="group"
+                                aria-label="Mission playback controls"
+                            >
+                                <button
+                                    className="btn btn-sm sim-map-controls-toggle"
+                                    onClick={toggleMapControls}
+                                    aria-expanded={mapControlsOpen}
+                                    aria-controls="sim-map-controls-panel"
+                                >
+                                    Controls {mapControlsOpen ? "▲" : "▼"}
+                                </button>
+                                <div className="sim-map-controls-panel" id="sim-map-controls-panel">
+                                    <button className="btn ghost btn-sm" onClick={handleTogglePause}>{isPaused ? "Play" : "Pause"}</button>
+                                    <button className="btn ghost btn-sm" onClick={handleFastForward}>Fast-Forward ({simulationSpeed}x)</button>
+                                    <button className="btn btn-sm" onClick={handleEndMission}>End Mission</button>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="sim-side-panels">
@@ -1272,6 +1383,21 @@ export default function SimulationPage() {
                                 onAcknowledge={handleAcknowledgeAlert}
                                 onAcknowledgeAll={handleAcknowledgeAllAlerts}
                             />
+
+                            <div className="panel-card" role="status" aria-live="polite" aria-label="Environment effects">
+                                <div className="badge" style={{marginBottom: 8}}>
+                                    <span className="badge-dot" aria-hidden="true"/> Environment Effects
+                                </div>
+                                <div className="log-meta" style={{marginBottom: 6}}>Live environmental impact on mission performance</div>
+                                <div style={{display: "grid", gap: 4, fontSize: 12}}>
+                                    <div><strong>Sensor efficiency</strong> {environmentEffects.sensorPct.toFixed(0)}%</div>
+                                    <div><strong>Battery drain</strong> {environmentEffects.batteryPct.toFixed(0)}%</div>
+                                    <div>
+                                        <strong>Wind ({environmentEffects.windState})</strong> {environmentEffects.windDeltaPct >= 0 ? "+" : ""}
+                                        {environmentEffects.windDeltaPct.toFixed(1)}%
+                                    </div>
+                                </div>
+                            </div>
 
                             <div className="panel-card detection-log-panel" aria-labelledby="detection-log-heading"
                                  data-tutorial-id="sim-detection-log">
@@ -1385,6 +1511,11 @@ export default function SimulationPage() {
                                             <div className="drawer-drone-scroll" role="list" aria-label="Active drones">
                                                 {drones.map((drone) => {
                                                     const isSelected = selectedDroneIds.includes(drone.id);
+                                                    const effectiveSpeed = computeWindAdjustedSpeedKts(
+                                                        drone.speedKts,
+                                                        drone.headingDeg,
+                                                        scenario.sector.conditions,
+                                                    ).effectiveSpeedKts;
                                                     return (
                                                         <div key={drone.id} className="drone-pill-row" role="listitem">
                                                             <input
@@ -1455,6 +1586,7 @@ export default function SimulationPage() {
                                                                            style={{width: 70}}/>
                                                                     <span className="drone-meta">kts</span>
                                                                 </label>
+                                                                <span className="drone-meta">Ground {effectiveSpeed.toFixed(1)} kts</span>
                                                                 <label style={{
                                                                     display: "flex",
                                                                     alignItems: "center",

@@ -32,6 +32,7 @@ import {getPresetById} from "../data/scenarios";
 import type {MissionMetricsSession} from "../domain/types/metrics";
 import type {NasaTlxAssessment, NasaTlxPairwiseSelection, NasaTlxResponses} from "../domain/types/tlx";
 import {calculateWeightedNasaTlx, normalizePairwiseSelections} from "../domain/metrics/tlx";
+import {computeReturnMinutesWithEnvironment} from "../domain/environment/effects";
 
 export type MissionPhase = "landing" | "setup" | "simulation" | "debrief";
 export type MissionEndReason = "manual-end" | "aborted" | "completed";
@@ -105,7 +106,11 @@ type MissionContextValue = {
     setCommsConfig: React.Dispatch<React.SetStateAction<CommsConfig>>;
 
     postMission: PostMissionState;
-    finalizeMission: (input: { metrics: MissionMetricsSession; endedAt?: number; endReason?: MissionEndReason }) => void;
+    finalizeMission: (input: {
+        metrics: MissionMetricsSession;
+        endedAt?: number;
+        endReason?: MissionEndReason
+    }) => void;
     setNasaTlxOptIn: (value: boolean) => void;
     submitNasaTlxResponses: (input: {
         responses: NasaTlxResponses;
@@ -221,12 +226,13 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
     }, [scenario.sector.bounds]);
 
     const computeReturnMinutes = useCallback((drone: DroneState) => {
-        const speedMs = Math.max(0, drone.speedKts) * 0.514444;
-        if (speedMs <= 0.0001) return Number.POSITIVE_INFINITY;
-        const dx = drone.position.x - drone.homePosition.x;
-        const dy = drone.position.y - drone.homePosition.y;
-        return Math.hypot(dx, dy) / speedMs / 60;
-    }, []);
+        return computeReturnMinutesWithEnvironment(
+            drone.position,
+            drone.homePosition,
+            drone.speedKts,
+            scenario.sector.conditions,
+        );
+    }, [scenario.sector.conditions]);
 
     const computeEmergencyReserve = useCallback((drone: DroneState) => {
         const minutesToHub = computeReturnMinutes(drone);
@@ -385,7 +391,11 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         setMessage(`Prepared ${nextDrones.length} drones for preset ${preset.label}`);
     }, [clampToBounds, clear, computeEmergencyReserve, computeReturnMinutes, hub.position, resetDrones, seed, select, setMessage, swarmEnabledGlobal]);
 
-    const finalizeMission = useCallback((input: { metrics: MissionMetricsSession; endedAt?: number; endReason?: MissionEndReason }) => {
+    const finalizeMission = useCallback((input: {
+        metrics: MissionMetricsSession;
+        endedAt?: number;
+        endReason?: MissionEndReason
+    }) => {
         setPostMission({
             missionEndedAt: input.endedAt ?? Date.now(),
             endReason: input.endReason ?? "manual-end",

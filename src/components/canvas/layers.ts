@@ -1,5 +1,5 @@
 import {generateWaterTileData, droneHubFromBounds} from "../../domain/environment/generator";
-import type {MaritimeScenario, Vec2, AnomalyInstance} from "../../domain/types/environment";
+import type {MaritimeScenario, Vec2, AnomalyInstance, EnvironmentalConditions} from "../../domain/types/environment";
 import type {DroneState} from "../../domain/types/drone";
 import type {Alert} from "../../domain/types/alert";
 import type {VoronoiCell} from "./voronoi";
@@ -39,6 +39,75 @@ export const drawWater = (ctx: CanvasRenderingContext2D, size: Size, camera: Cam
     grad.addColorStop(1, "rgba(7, 89, 133, 0.08)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size.width, size.height);
+    ctx.restore();
+};
+
+const degToRad = (deg: number) => (deg * Math.PI) / 180;
+
+export const drawSurfaceDynamics = (
+    ctx: CanvasRenderingContext2D,
+    size: Size,
+    conditions: EnvironmentalConditions,
+    timestamp: number,
+) => {
+    const seaStateFactor = Math.max(0, Math.min(1, conditions.seaState / 9));
+    const windFactor = Math.max(0, Math.min(1, conditions.windKts / 40));
+    const roughness = seaStateFactor * 0.65 + windFactor * 0.35;
+    const directionDeg = conditions.windDirectionDeg ?? (conditions.windKts * 11 + conditions.seaState * 17) % 360;
+    const direction = degToRad(directionDeg);
+    const dirX = Math.cos(direction);
+    const dirY = -Math.sin(direction);
+    const crestX = Math.sin(direction);
+    const crestY = Math.cos(direction);
+    const diagonal = Math.hypot(size.width, size.height);
+    const lineCount = Math.max(10, Math.floor(12 + roughness * 22));
+    const spacing = diagonal / lineCount;
+    const lineLength = 22 + roughness * 40;
+    const travelSpeed = 0.015 + windFactor * 0.05;
+    const travel = (timestamp * travelSpeed) % spacing;
+
+    ctx.save();
+    ctx.lineCap = "round";
+    for (let i = -2; i <= lineCount + 2; i += 1) {
+        const offset = -diagonal / 2 + i * spacing + travel;
+        const centerX = size.width / 2 + dirX * offset;
+        const centerY = size.height / 2 + dirY * offset;
+        const pulse = 0.8 + 0.2 * Math.sin(timestamp / 620 + i * 0.6);
+        const alpha = (0.04 + roughness * 0.08) * pulse;
+        ctx.strokeStyle = `rgba(186, 230, 253, ${alpha.toFixed(3)})`;
+        ctx.lineWidth = 1 + roughness * 1.4;
+        ctx.beginPath();
+        ctx.moveTo(centerX - crestX * lineLength, centerY - crestY * lineLength);
+        ctx.lineTo(centerX + crestX * lineLength, centerY + crestY * lineLength);
+        ctx.stroke();
+    }
+
+    const arrowLength = 24;
+    const hudX = size.width - 96;
+    const hudY = 52;
+    const arrowX = Math.cos(direction) * arrowLength;
+    const arrowY = -Math.sin(direction) * arrowLength;
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.5)";
+    ctx.fillRect(hudX - 42, hudY - 26, 84, 54);
+    ctx.strokeStyle = "rgba(125, 211, 252, 0.85)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(hudX - arrowX * 0.5, hudY - arrowY * 0.5);
+    ctx.lineTo(hudX + arrowX, hudY + arrowY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(hudX + arrowX, hudY + arrowY);
+    ctx.lineTo(hudX + arrowX - 6 * Math.cos(direction - Math.PI / 7), hudY + arrowY + 6 * Math.sin(direction - Math.PI / 7));
+    ctx.lineTo(hudX + arrowX - 6 * Math.cos(direction + Math.PI / 7), hudY + arrowY + 6 * Math.sin(direction + Math.PI / 7));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(125, 211, 252, 0.95)";
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(224, 242, 254, 0.95)";
+    ctx.font = "10px 'Inter', system-ui, -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${conditions.windKts} kts`, hudX, hudY + 20);
     ctx.restore();
 };
 

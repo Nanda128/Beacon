@@ -49,7 +49,7 @@ export default function SetupPage() {
         loadScenarioFile,
     } = scenarioHook;
 
-    const {select, clear} = droneSelection;
+    const {select, clear, setSelectedIds} = droneSelection;
     const didAutoApplyPresetFleet = useRef(false);
 
     useEffect(() => {
@@ -67,8 +67,11 @@ export default function SetupPage() {
     };
 
     const handleDeleteSelectedDrones = () => {
-        setDrones((prev) => prev.filter((d) => !selectedDroneIds.includes(d.id)));
-        clear();
+        setSelectedIds((ids) => {
+            if (ids.length === 0) return ids;
+            setDrones((prev) => prev.filter((d) => !ids.includes(d.id)));
+            return [];
+        });
     };
 
     const handleDroneSpeedChange = (id: string, speedKts: number) => {
@@ -95,7 +98,7 @@ export default function SetupPage() {
             <PageTransition>
                 <div className="setup-container">
                     <nav className="setup-nav" aria-label="Setup navigation">
-                        <button className="btn ghost btn-sm" onClick={handleBack}>← Back to Home</button>
+                        <button type="button" className="btn ghost btn-sm" onClick={handleBack}>← Back to Home</button>
                     </nav>
 
                     <section className="panel-card" aria-labelledby="scenario-heading">
@@ -133,9 +136,9 @@ export default function SetupPage() {
                             </Field>
                         </ControlGrid>
                         <ButtonRow>
-                            <button className="btn" onClick={handleGenerate}>Generate</button>
-                            <button className="btn ghost" onClick={handleRandomSeed}>Random Seed</button>
-                            <button className="btn ghost" onClick={() => downloadScenarioJSON(scenario)}>Save JSON
+                            <button type="button" className="btn" onClick={handleGenerate}>Generate</button>
+                            <button type="button" className="btn ghost" onClick={handleRandomSeed}>Random Seed</button>
+                            <button type="button" className="btn ghost" onClick={() => downloadScenarioJSON(scenario)}>Save JSON
                             </button>
                             <label className="btn ghost file-btn" tabIndex={0}>
                                 Load JSON
@@ -191,14 +194,15 @@ export default function SetupPage() {
                             </Field>
                             <Field label=" " className="field" as="div">
                                 <div style={{display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap"}}>
-                                    <button className="btn" onClick={handleSpawnDrone}
+                                    <button type="button" className="btn" onClick={handleSpawnDrone}
                                             data-tutorial-id="setup-spawn-drone">Spawn Drone
                                     </button>
-                                    <button className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
+                                    <button type="button" className="btn ghost" onClick={() => select(drones.map((d) => d.id))}>Select
                                         All
                                     </button>
-                                    <button className="btn ghost" onClick={clear}>Deselect All</button>
+                                    <button type="button" className="btn ghost" onClick={clear}>Deselect All</button>
                                     <button
+                                        type="button"
                                         className="btn ghost danger"
                                         onClick={handleDeleteSelectedDrones}
                                         disabled={selectedDroneIds.length === 0}
@@ -305,8 +309,10 @@ export default function SetupPage() {
                                 × {sectorMeta.bounds.heightMeters / 1000} km
                             </div>
                             <div><strong>Sea state</strong> {sectorMeta.conditions.seaState}</div>
-                            <div><strong>Wind</strong> {sectorMeta.conditions.windKts} kts</div>
+                            <div><strong>Wind</strong> {sectorMeta.conditions.windKts} kts @{sectorMeta.conditions.windDirectionDeg ?? 0}deg</div>
                             <div><strong>Visibility</strong> {sectorMeta.conditions.visibilityKm} km</div>
+                            <div><strong>Sea temp</strong> {sectorMeta.conditions.surfaceTempC} C</div>
+                            <div><strong>Conditions</strong> {sectorMeta.conditions.description ?? "N/A"}</div>
                             <div><strong>Anomalies</strong> {scenario.anomalies.items.length} placed</div>
                             <div><strong>Drones</strong> {drones.length} spawned</div>
                         </div>
@@ -315,7 +321,7 @@ export default function SetupPage() {
                     </section>
 
                     <section className="setup-cta" aria-label="Launch mission">
-                        <button className="btn btn-large btn-launch" onClick={handleLaunchMission}
+                        <button type="button" className="btn btn-large btn-launch" onClick={handleLaunchMission}
                                 data-tutorial-id="setup-launch-mission">
                             Launch Mission
                         </button>

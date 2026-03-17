@@ -3,6 +3,7 @@ export type Vec2 = { x: number; y: number };
 export type EnvironmentalConditions = {
     seaState: number;
     windKts: number;
+    windDirectionDeg?: number;
     visibilityKm: number;
     surfaceTempC: number;
     description?: string;

@@ -24,6 +24,7 @@ import {
     drawAlertMarkers,
     drawCrosshair,
     drawDrones,
+    drawSurfaceDynamics,
     drawGrid,
     drawSectorBounds,
     drawSelectionBox,
@@ -301,6 +302,7 @@ export default function MaritimeCanvas2D({
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, size.width, size.height);
             drawWater(ctx, size, cameraRef.current, waterPatternRef.current);
+            drawSurfaceDynamics(ctx, size, scenario.sector.conditions, timestamp);
             drawGrid(ctx, size, cameraRef.current, gridSpacing);
             drawAxes(ctx, size, cameraRef.current);
             drawCoverageHeatmap(ctx, size, cameraRef.current, scenario.sector.bounds, coverageHeatmap);
@@ -378,6 +380,9 @@ export default function MaritimeCanvas2D({
                         <div><strong>Seed</strong> {scenario.seed}</div>
                         <div>
                             <strong>Conditions</strong> SS {scenario.sector.conditions.seaState} · {scenario.sector.conditions.windKts} kts
+                            {typeof scenario.sector.conditions.windDirectionDeg === "number"
+                                ? ` @ ${Math.round(scenario.sector.conditions.windDirectionDeg)} deg`
+                                : ""}
                             · {scenario.sector.conditions.visibilityKm} km vis
                         </div>
                         <div>

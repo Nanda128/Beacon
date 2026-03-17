@@ -23,6 +23,7 @@
     "simplex-noise": "^4.0.3"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
     "@types/d3-delaunay": "^6.0.4",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^24.10.1",

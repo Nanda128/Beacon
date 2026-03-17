@@ -375,6 +375,8 @@ body {
 
 .content {
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
     padding: 16px 20px 24px;
     display: flex;
     flex-direction: column;
@@ -683,9 +685,30 @@ body {
 
 .drone-list {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 8px;
     margin: 8px 0 4px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+}
+
+.drone-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.drone-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.drone-list::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+}
+
+.drone-list::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-muted);
 }
 
 .kbd {
@@ -1186,11 +1209,13 @@ body {
     max-width: 1000px;
     margin: 0 auto;
     padding: 16px 16px 48px;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 20px;
     overflow-y: auto;
-    max-height: calc(100vh - 64px);
     scrollbar-gutter: stable;
 }
 
@@ -1430,6 +1455,75 @@ body {
     font-size: 13px;
     color: var(--color-text-secondary);
     flex-wrap: wrap;
+}
+
+.sim-map-overlay-host {
+    position: relative;
+}
+
+.sim-map-controls-overlay {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 3;
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+    max-width: min(420px, calc(100% - 24px));
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-bg-overlay);
+    backdrop-filter: blur(6px);
+    box-shadow: var(--shadow-md);
+}
+
+.sim-map-controls-toggle {
+    min-width: 120px;
+}
+
+.sim-map-controls-panel {
+    display: none;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.sim-map-controls-overlay.open .sim-map-controls-panel {
+    display: flex;
+}
+
+.sim-map-controls-overlay .btn {
+    border: 1px solid var(--color-border-strong);
+}
+
+.sim-map-controls-overlay .btn.ghost {
+    background: var(--color-bg-raised);
+    color: var(--color-text);
+    border-color: var(--color-border-strong);
+}
+
+.sim-map-controls-overlay .btn.ghost:hover {
+    background: var(--color-bg-inset);
+}
+
+@media (max-width: 900px) {
+    .sim-map-controls-overlay {
+        bottom: 12px;
+        right: 12px;
+        max-width: calc(100% - 24px);
+        justify-items: end;
+    }
+
+    .sim-map-controls-overlay.open .sim-map-controls-panel {
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .sim-map-controls-overlay.open .sim-map-controls-panel .btn {
+        width: 100%;
+    }
 }
 
 .detection-log-panel {

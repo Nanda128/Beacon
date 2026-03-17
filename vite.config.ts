@@ -1,16 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   build: {
-    // Raise the warning threshold to account for the heavier map-related bundles
-    chunkSizeWarningLimit: 1200, // in kB
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks: {
-          // Keep map-related libraries in a dedicated vendor chunk
           maplibre: [
             'maplibre-gl',
             'react-map-gl/maplibre',
