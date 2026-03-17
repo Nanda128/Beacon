@@ -67,7 +67,7 @@ const commAlertBandRank: Record<CommAlertBand, number> = {
     lost: 4,
 };
 
-const playbackSpeeds = [1, 2, 4] as const;
+const playbackSpeeds = [1, 2, 4, 8, 16] as const;
 
 /**
  * Simulation Page: real-time mission execution view.
@@ -127,6 +127,7 @@ export default function SimulationPage() {
     const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
     const isPausedRef = useRef(false);
     const simulationSpeedRef = useRef(1);
+    const isTerminatingRef = useRef(false);
     const metricsCollectionEnabledRef = useRef(true);
     const {playForAlerts} = useAlertAudio(alertAudioEnabled);
 
@@ -151,6 +152,12 @@ export default function SimulationPage() {
     useEffect(() => {
         simulationSpeedRef.current = simulationSpeed;
     }, [simulationSpeed]);
+    useEffect(() => {
+        isTerminatingRef.current = false;
+        return () => {
+            isTerminatingRef.current = true;
+        };
+    }, []);
     const updateMetricsCollectionEnabled = useCallback((enabled: boolean) => {
         metricsCollectionEnabledRef.current = enabled;
         setMetricsCollectionEnabled(enabled);
@@ -158,6 +165,7 @@ export default function SimulationPage() {
     useEffect(() => {
         setMetrics(createMissionMetricsSession(scenario));
         updateMetricsCollectionEnabled(true);
+        isTerminatingRef.current = false;
         simNowRef.current = Date.now();
         lastFrameRef.current = null;
         lastSensorTickSimRef.current = null;
@@ -445,10 +453,10 @@ export default function SimulationPage() {
         const windDeltaPct = airborne.length === 0
             ? 0
             : airborne.reduce((sum, drone) => {
-                const {effectiveSpeedKts} = computeWindAdjustedSpeedKts(drone.speedKts, drone.headingDeg, conditions);
-                const baseSpeed = Math.max(0.1, drone.speedKts);
-                return sum + ((effectiveSpeedKts / baseSpeed) - 1) * 100;
-            }, 0) / airborne.length;
+            const {effectiveSpeedKts} = computeWindAdjustedSpeedKts(drone.speedKts, drone.headingDeg, conditions);
+            const baseSpeed = Math.max(0.1, drone.speedKts);
+            return sum + ((effectiveSpeedKts / baseSpeed) - 1) * 100;
+        }, 0) / airborne.length;
 
         const windState = airborne.length === 0
             ? "No active drones"
@@ -596,7 +604,7 @@ export default function SimulationPage() {
     useEffect(() => {
         if (!metricsCollectionEnabled) return;
         const interval = window.setInterval(() => {
-            if (!metricsCollectionEnabledRef.current || isPausedRef.current) return;
+            if (!metricsCollectionEnabledRef.current || isPausedRef.current || isTerminatingRef.current) return;
             const now = simNowRef.current;
             const currentAlerts = alertsRef.current;
             setMetrics((prev) => sampleMissionMetrics(prev, {
@@ -614,14 +622,15 @@ export default function SimulationPage() {
     }, [metricsCollectionEnabled, sensorSettings.rangeMeters]);
 
     useEffect(() => {
+        isTerminatingRef.current = false;
         let raf: number;
         const step = (timestamp: number) => {
             try {
+                if (isTerminatingRef.current) return;
                 if (lastFrameRef.current === null) lastFrameRef.current = timestamp;
                 const elapsedMs = timestamp - lastFrameRef.current;
                 lastFrameRef.current = timestamp;
                 if (isPausedRef.current) {
-                    raf = requestAnimationFrame(step);
                     return;
                 }
                 const simulatedElapsedMs = elapsedMs * simulationSpeedRef.current;
@@ -967,11 +976,14 @@ export default function SimulationPage() {
                     },
                 });
             } finally {
-                raf = requestAnimationFrame(step);
+                if (!isTerminatingRef.current) {
+                    raf = requestAnimationFrame(step);
+                }
             }
         };
         raf = requestAnimationFrame(step);
         return () => {
+            isTerminatingRef.current = true;
             cancelAnimationFrame(raf);
             lastFrameRef.current = null;
         };
@@ -981,7 +993,7 @@ export default function SimulationPage() {
         if (!sensorsEnabled) return;
         const interval = window.setInterval(() => {
             try {
-                if (isPausedRef.current) return;
+                if (isPausedRef.current || isTerminatingRef.current) return;
                 const now = simNowRef.current;
                 const previousSensorTick = lastSensorTickSimRef.current ?? now;
                 const elapsedSensorSimMs = Math.max(0, now - previousSensorTick);
@@ -1253,11 +1265,17 @@ export default function SimulationPage() {
     }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
 
     const handleBackToSetup = () => {
+        isTerminatingRef.current = true;
+        isPausedRef.current = true;
+        setIsPaused(true);
         setPhase("setup");
         navigate("/setup");
     };
 
     const handleEndMission = useCallback(() => {
+        isTerminatingRef.current = true;
+        isPausedRef.current = true;
+        setIsPaused(true);
         const now = simNowRef.current;
         const endedAt = Date.now();
         const currentAlerts = alertsRef.current;
@@ -1370,8 +1388,11 @@ export default function SimulationPage() {
                                     Controls {mapControlsOpen ? "▲" : "▼"}
                                 </button>
                                 <div className="sim-map-controls-panel" id="sim-map-controls-panel">
-                                    <button className="btn ghost btn-sm" onClick={handleTogglePause}>{isPaused ? "Play" : "Pause"}</button>
-                                    <button className="btn ghost btn-sm" onClick={handleFastForward}>Fast-Forward ({simulationSpeed}x)</button>
+                                    <button className="btn ghost btn-sm"
+                                            onClick={handleTogglePause}>{isPaused ? "Play" : "Pause"}</button>
+                                    <button className="btn ghost btn-sm" onClick={handleFastForward}>Fast-Forward
+                                        ({simulationSpeed}x)
+                                    </button>
                                     <button className="btn btn-sm" onClick={handleEndMission}>End Mission</button>
                                 </div>
                             </div>
@@ -1384,16 +1405,22 @@ export default function SimulationPage() {
                                 onAcknowledgeAll={handleAcknowledgeAllAlerts}
                             />
 
-                            <div className="panel-card" role="status" aria-live="polite" aria-label="Environment effects">
+                            <div className="panel-card" role="status" aria-live="polite"
+                                 aria-label="Environment effects">
                                 <div className="badge" style={{marginBottom: 8}}>
                                     <span className="badge-dot" aria-hidden="true"/> Environment Effects
                                 </div>
-                                <div className="log-meta" style={{marginBottom: 6}}>Live environmental impact on mission performance</div>
+                                <div className="log-meta" style={{marginBottom: 6}}>Live environmental impact on mission
+                                    performance
+                                </div>
                                 <div style={{display: "grid", gap: 4, fontSize: 12}}>
-                                    <div><strong>Sensor efficiency</strong> {environmentEffects.sensorPct.toFixed(0)}%</div>
-                                    <div><strong>Battery drain</strong> {environmentEffects.batteryPct.toFixed(0)}%</div>
+                                    <div><strong>Sensor efficiency</strong> {environmentEffects.sensorPct.toFixed(0)}%
+                                    </div>
+                                    <div><strong>Battery drain</strong> {environmentEffects.batteryPct.toFixed(0)}%
+                                    </div>
                                     <div>
-                                        <strong>Wind ({environmentEffects.windState})</strong> {environmentEffects.windDeltaPct >= 0 ? "+" : ""}
+                                        <strong>Wind
+                                            ({environmentEffects.windState})</strong> {environmentEffects.windDeltaPct >= 0 ? "+" : ""}
                                         {environmentEffects.windDeltaPct.toFixed(1)}%
                                     </div>
                                 </div>
@@ -1586,7 +1613,8 @@ export default function SimulationPage() {
                                                                            style={{width: 70}}/>
                                                                     <span className="drone-meta">kts</span>
                                                                 </label>
-                                                                <span className="drone-meta">Ground {effectiveSpeed.toFixed(1)} kts</span>
+                                                                <span
+                                                                    className="drone-meta">Ground {effectiveSpeed.toFixed(1)} kts</span>
                                                                 <label style={{
                                                                     display: "flex",
                                                                     alignItems: "center",
