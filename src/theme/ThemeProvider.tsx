@@ -9,7 +9,7 @@ type ThemeContextValue = {
 };
 
 const ThemeContext = createContext<ThemeContextValue>({
-    mode: "light",
+    mode: "auto",
     resolved: "light",
     setMode: () => {
     },
@@ -35,9 +35,9 @@ function applyTokens(resolved: "light" | "dark") {
 
 export function ThemeProvider({children}: { children: React.ReactNode }) {
     const [mode, setModeState] = useState<ThemeMode>(() => {
-        if (typeof window === "undefined") return "light";
+        if (typeof window === "undefined") return "auto";
         const stored = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-        return stored === "light" || stored === "dark" || stored === "auto" ? stored : "light";
+        return stored === "light" || stored === "dark" || stored === "auto" ? stored : "auto";
     });
 
     const resolved = useMemo(() => resolveMode(mode), [mode]);
