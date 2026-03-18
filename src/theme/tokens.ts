@@ -4,7 +4,7 @@
  * Light-mode default follows Piepenbrock et al. (2013) — positive-polarity
  * displays reduce error rates for sustained monitoring tasks.
  *
- * All text-on-background pairs meet WCAG 2.2 AA (≥4.5:1) or AAA (≥7:1).
+ * Core text-on-background pairs are validated by scripts/contrast-audit.mjs.
  * Semantic status colours follow MIL-STD-1472H §5.2.3.4 conventions
  * (green = operational, amber = caution, red = critical).
  */
@@ -19,13 +19,13 @@ export const lightTokens: Record<string, string> = {
     "--color-bg-inset": "#EEF1F6",
     "--color-bg-overlay": "rgba(255,255,255,0.92)",
 
-    "--color-border": "#D1D5DB",
-    "--color-border-subtle": "#E5E7EB",
-    "--color-border-strong": "#94A3B8",
+    "--color-border": "#6B7280",
+    "--color-border-subtle": "#7B8798",
+    "--color-border-strong": "#64748B",
 
     "--color-text": "#1E293B",
     "--color-text-secondary": "#475569",
-    "--color-text-muted": "#64748B",
+    "--color-text-muted": "#627186",
 
     "--color-primary": "#0D7377",
     "--color-primary-hover": "#0A5C5F",
@@ -35,12 +35,12 @@ export const lightTokens: Record<string, string> = {
     "--color-success": "#16A34A",
     "--color-success-bg": "rgba(22,163,74,0.10)",
     "--color-success-border": "rgba(22,163,74,0.35)",
-    "--color-success-text": "#15803D",
+    "--color-success-text": "#166534",
 
     "--color-warning": "#D97706",
     "--color-warning-bg": "rgba(217,119,6,0.10)",
     "--color-warning-border": "rgba(217,119,6,0.35)",
-    "--color-warning-text": "#B45309",
+    "--color-warning-text": "#92400E",
 
     "--color-danger": "#DC2626",
     "--color-danger-bg": "rgba(220,38,38,0.10)",
@@ -69,9 +69,9 @@ export const darkTokens: Record<string, string> = {
     "--color-bg-inset": "#0F172A",
     "--color-bg-overlay": "rgba(15,23,42,0.92)",
 
-    "--color-border": "rgba(255,255,255,0.10)",
-    "--color-border-subtle": "rgba(255,255,255,0.06)",
-    "--color-border-strong": "rgba(255,255,255,0.22)",
+    "--color-border": "rgba(255,255,255,0.40)",
+    "--color-border-subtle": "rgba(255,255,255,0.35)",
+    "--color-border-strong": "rgba(255,255,255,0.50)",
 
     "--color-text": "#E2E8F0",
     "--color-text-secondary": "#CBD5E1",

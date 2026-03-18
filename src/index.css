@@ -11,13 +11,13 @@
     --color-bg-inset: #EEF1F6;
     --color-bg-overlay: rgba(255, 255, 255, 0.92);
 
-    --color-border: #D1D5DB;
-    --color-border-subtle: #E5E7EB;
-    --color-border-strong: #94A3B8;
+    --color-border: #6B7280;
+    --color-border-subtle: #7B8798;
+    --color-border-strong: #64748B;
 
     --color-text: #1E293B;
     --color-text-secondary: #475569;
-    --color-text-muted: #64748B;
+    --color-text-muted: #627186;
 
     --color-primary: #0D7377;
     --color-primary-hover: #0A5C5F;
@@ -27,12 +27,12 @@
     --color-success: #16A34A;
     --color-success-bg: rgba(22, 163, 74, 0.10);
     --color-success-border: rgba(22, 163, 74, 0.35);
-    --color-success-text: #15803D;
+    --color-success-text: #166534;
 
     --color-warning: #D97706;
     --color-warning-bg: rgba(217, 119, 6, 0.10);
     --color-warning-border: rgba(217, 119, 6, 0.35);
-    --color-warning-text: #B45309;
+    --color-warning-text: #92400E;
 
     --color-danger: #DC2626;
     --color-danger-bg: rgba(220, 38, 38, 0.10);
@@ -1703,7 +1703,11 @@ body {
 }
 
 .alert-entry.acked {
-    opacity: 0.5;
+    border-left-style: dashed;
+}
+
+.alert-entry.acked .alert-entry-msg {
+    color: var(--color-text-secondary);
 }
 
 .alert-entry-sev {
@@ -1753,6 +1757,60 @@ textarea:focus-visible {
     outline: none;
     border-color: var(--color-focus-ring);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+@media (prefers-contrast: more) {
+    :root {
+        --color-border-subtle: var(--color-border);
+        --color-bg-overlay: var(--color-bg-raised);
+    }
+
+    .panel-card,
+    .drawer-body,
+    .drawer-handle,
+    .metric-card,
+    .metrics-chart-card,
+    .metrics-definition-card,
+    .metrics-event-item,
+    .alert-entry,
+    .log-entry,
+    .preset-card,
+    .custom-scenario-row {
+        border-color: var(--color-border-strong);
+    }
+
+    .btn,
+    .field-input,
+    .theme-toggle-btn,
+    .mode-btn,
+    .scenario-tag-chip,
+    .drone-pill,
+    .alert-sev-btn,
+    .alert-cat-btn {
+        outline-width: 3px;
+    }
+}
+
+@media (forced-colors: active) {
+    .btn,
+    .field-input,
+    .scenario-tag-chip,
+    .drone-pill,
+    .alert-entry,
+    .panel-card {
+        forced-color-adjust: auto;
+        border: 1px solid CanvasText;
+    }
+
+    .skip-link,
+    .btn,
+    .theme-toggle-btn.active,
+    .mode-btn.active {
+        forced-color-adjust: none;
+        background: ButtonFace;
+        color: ButtonText;
+        border: 1px solid ButtonText;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
