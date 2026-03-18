@@ -85,13 +85,21 @@ body {
     background: var(--color-primary);
     color: var(--color-primary-text);
     padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
     z-index: 10000;
     font-weight: 700;
 }
 
-.skip-link:focus {
+.skip-link:focus,
+.skip-link:focus-visible {
     left: 16px;
     top: 16px;
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
 }
 
 .app-shell {
@@ -692,23 +700,27 @@ body {
     overflow-y: auto;
     padding-right: 4px;
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
 }
 
-.drone-list::-webkit-scrollbar {
-    width: 6px;
-}
+@supports selector(::-webkit-scrollbar) {
+    .drone-list::-webkit-scrollbar {
+        width: 6px;
+    }
 
-.drone-list::-webkit-scrollbar-track {
-    background: transparent;
-}
+    .drone-list::-webkit-scrollbar-track {
+        background: transparent;
+    }
 
-.drone-list::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
-}
+    .drone-list::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 3px;
+    }
 
-.drone-list::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    .drone-list::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-muted);
+    }
 }
 
 .kbd {
@@ -889,23 +901,27 @@ body {
     min-height: 0;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
 }
 
-.drawer-body::-webkit-scrollbar {
-    width: 6px;
-}
+@supports selector(::-webkit-scrollbar) {
+    .drawer-body::-webkit-scrollbar {
+        width: 6px;
+    }
 
-.drawer-body::-webkit-scrollbar-track {
-    background: transparent;
-}
+    .drawer-body::-webkit-scrollbar-track {
+        background: transparent;
+    }
 
-.drawer-body::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
-}
+    .drawer-body::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 3px;
+    }
 
-.drawer-body::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    .drawer-body::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-muted);
+    }
 }
 
 .drawer-panel {
@@ -934,23 +950,27 @@ body {
     gap: 8px;
     padding-right: 4px;
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
 }
 
-.drawer-drone-scroll::-webkit-scrollbar {
-    width: 6px;
-}
+@supports selector(::-webkit-scrollbar) {
+    .drawer-drone-scroll::-webkit-scrollbar {
+        width: 6px;
+    }
 
-.drawer-drone-scroll::-webkit-scrollbar-track {
-    background: transparent;
-}
+    .drawer-drone-scroll::-webkit-scrollbar-track {
+        background: transparent;
+    }
 
-.drawer-drone-scroll::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
-}
+    .drawer-drone-scroll::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 3px;
+    }
 
-.drawer-drone-scroll::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    .drawer-drone-scroll::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-muted);
+    }
 }
 
 .landing-container {
@@ -1217,25 +1237,29 @@ body {
     gap: 20px;
     overflow-y: auto;
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) var(--color-bg-inset);
 }
 
-.setup-container::-webkit-scrollbar {
-    width: 8px;
-}
+@supports selector(::-webkit-scrollbar) {
+    .setup-container::-webkit-scrollbar {
+        width: 8px;
+    }
 
-.setup-container::-webkit-scrollbar-track {
-    background: var(--color-bg-inset);
-    border-radius: 4px;
-}
+    .setup-container::-webkit-scrollbar-track {
+        background: var(--color-bg-inset);
+        border-radius: 4px;
+    }
 
-.setup-container::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 4px;
-    min-height: 40px;
-}
+    .setup-container::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 4px;
+        min-height: 40px;
+    }
 
-.setup-container::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    .setup-container::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-muted);
+    }
 }
 
 .setup-nav {

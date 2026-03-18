@@ -23,6 +23,7 @@ export default function HelpModal({
     return createPortal(
         <div className="help-modal-backdrop" role="presentation" onClick={onClose}>
             <div
+                id="help-modal"
                 className="help-modal"
                 role="dialog"
                 aria-modal="true"
