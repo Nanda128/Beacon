@@ -1,0 +1,84 @@
+name: Contrast Audit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  wcag-contrast:
+    name: WCAG Contrast Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run contrast audit
+        run: npm run a11y:contrast
+
+      - name: Upload contrast report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contrast-report
+          path: reports/contrast-report.json
+          if-no-files-found: error
+
+      - name: Publish job summary
+        if: always()
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const reportPath = 'reports/contrast-report.json';
+
+          if (!fs.existsSync(reportPath)) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '## WCAG contrast audit\n\nReport file not found.\n');
+            process.exit(0);
+          }
+
+          const payload = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+          const entries = payload.report ?? [];
+          const failing = entries.filter((entry) => !entry.passes);
+          const weakest = [...entries].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
+
+          const lines = [
+            '## WCAG contrast audit',
+            '',
+            `Generated: ${payload.generatedAt ?? 'unknown'}`,
+            '',
+            `- Total checks: ${entries.length}`,
+            `- Failing checks: ${failing.length}`,
+            '',
+            '### Weakest contrast pairs',
+            '',
+            '| Theme | Pair | Ratio | Min | Result |',
+            '|---|---|---:|---:|---|',
+          ];
+
+          for (const entry of weakest) {
+            lines.push(`| ${entry.theme} | ${entry.pair} | ${entry.ratio}:1 | ${entry.threshold}:1 | ${entry.passes ? 'PASS' : 'FAIL'} |`);
+          }
+
+          if (failing.length > 0) {
+            lines.push('', '### Failing checks', '', '| Theme | Pair | Ratio | Min |', '|---|---|---:|---:|');
+            for (const entry of failing) {
+              lines.push(`| ${entry.theme} | ${entry.pair} | ${entry.ratio}:1 | ${entry.threshold}:1 |`);
+            }
+          }
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+          NODE
+
