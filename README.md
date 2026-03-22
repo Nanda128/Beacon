@@ -1,6 +1,6 @@
-# BEACON — Behavioral Engine for Autonomous Coordination in Ocean Navigation
+# BEACON - Behavioral Engine for Autonomous Coordination in Ocean Navigation
 
-> Final Year Project — B.Sc. Immersive Software Engineering, University of Limerick
+> Final Year Project - B.Sc. Immersive Software Engineering, University of Limerick
 
 BEACON is a browser-based simulation of autonomous drone-swarm maritime search-and-rescue (SAR) operations. 
 It models a realistic multi-drone fleet operating over a procedurally generated ocean sector, complete with swarm coordination, sensor detection, communication degradation, and operator alerts, all running entirely client-side with no backend.

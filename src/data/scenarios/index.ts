@@ -29,7 +29,7 @@ export const scenarioPresets: ScenarioPreset[] = [
     {
         id: "simple",
         label: "Simple",
-        description: "Nominal conditions — calm seas, light wind, 3 anomalies. Ideal first run.",
+        description: "Nominal conditions, calm seas, light wind, 3 anomalies. Ideal first run.",
         category: "training",
         tags: ["beginner", "nominal"],
         recommendedDroneCount: 5,
@@ -98,7 +98,7 @@ export const scenarioPresets: ScenarioPreset[] = [
     {
         id: "high-stress",
         label: "High Stress",
-        description: "16 anomalies, severe weather, reduced visibility — expect simultaneous alerts.",
+        description: "16 anomalies, severe weather, reduced visibility , expect simultaneous alerts.",
         category: "stress-test",
         tags: ["alerts", "high-workload", "10+ drones"],
         recommendedDroneCount: 12,

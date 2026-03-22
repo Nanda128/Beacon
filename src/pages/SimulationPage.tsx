@@ -598,7 +598,7 @@ export default function SimulationPage() {
         setCoverageActive(false);
         setManualInterventionEnabled(false);
         setActiveCoverageDroneIds([]);
-        setMessage("Coverage complete — all participating drones have returned to the hub.");
+        setMessage("Coverage complete, all drones RtB.");
     }, [activeCoverageDroneIds, coverageActive, drones, isHubWaypoint, sensorSettings.rangeMeters, setCoverageActive, setManualInterventionEnabled, setMessage, updateMetricsCollectionEnabled]);
 
     useEffect(() => {
@@ -717,7 +717,7 @@ export default function SimulationPage() {
                                         kind: "detected",
                                         droneId: drone.id,
                                         position: drone.position,
-                                        message: `${drone.callsign} reconnected — delivering ${buffer.events.length} buffered scan result${buffer.events.length === 1 ? "" : "s"}.`,
+                                        message: `${drone.callsign} reconnected - delivering ${buffer.events.length} buffered scan result${buffer.events.length === 1 ? "" : "s"}.`,
                                     };
                                     const allEvents = [reconnectMsg, ...buffer.events];
                                     let queuedCount = 0;
@@ -823,7 +823,7 @@ export default function SimulationPage() {
                                     batteryMinutesRemaining,
                                     returnMinutesRequired,
                                     message: isCritical
-                                        ? `${drone.callsign} battery CRITICAL ${Math.round(batteryPct)}% — ${batteryMinutesRemaining.toFixed(1)} min remaining near (${waypointLabel}).`
+                                        ? `${drone.callsign} battery CRITICAL ${Math.round(batteryPct)}% - ${batteryMinutesRemaining.toFixed(1)} min remaining near (${waypointLabel}).`
                                         : `${drone.callsign} battery ${Math.round(batteryPct)}% near waypoint (${waypointLabel}).`
                                 });
                             }
@@ -1589,7 +1589,7 @@ export default function SimulationPage() {
                                                                         {!drone.comms.connected && " (LOST)"}
                                                                         {drone.comms.offlineBufferSize > 0 && (
                                                                             <span style={{
-                                                                                color: "#f59e0b",
+                                                                                color: "var(--color-warning)",
                                                                                 fontWeight: 600
                                                                             }}>
                                                                             {" "}· {drone.comms.offlineBufferSize} buffered
@@ -1737,7 +1737,7 @@ export default function SimulationPage() {
                                             <div className="field-hint" style={{marginTop: 4}}>
                                                 {coverageActive
                                                     ? manualInterventionEnabled
-                                                        ? "Manual control enabled — select drones and click to assign waypoints."
+                                                        ? "Manual control enabled. Select drones and click to assign waypoints."
                                                         : "Drones are following autonomous coverage paths."
                                                     : "Start coverage first to toggle manual intervention."}
                                             </div>
@@ -1792,8 +1792,8 @@ export default function SimulationPage() {
                                                         <strong>{detectedCount}/{realItems.length}</strong> anomalies
                                                         detected
                                                         {missedCount > 0
-                                                            ? ` · ${missedCount} missed — highlighted on the map with pulsing red markers.`
-                                                            : " — all anomalies found! ✓"}
+                                                            ? ` · ${missedCount} missed, they are highlighted on the map with pulsing red markers.`
+                                                            : " all anomalies found! ✓"}
                                                     </div>
                                                 );
                                             })()}
@@ -1937,11 +1937,11 @@ export default function SimulationPage() {
                                             Buffered: {totalBufferedScanCount}
                                             {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality) && (
                                                 <span
-                                                    style={{color: "#f59e0b"}}>{" · "}Sensors degraded on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality).length} drone(s)</span>
+                                                    style={{color: "var(--color-warning)"}}>{" · "}Sensors degraded on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality).length} drone(s)</span>
                                             )}
                                             {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality) && (
                                                 <span
-                                                    style={{color: "#ef4444"}}>{" · "}Swarm disabled on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality).length} drone(s)</span>
+                                                    style={{color: "var(--color-danger)"}}>{" · "}Swarm disabled on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality).length} drone(s)</span>
                                             )}
                                         </div>
                                     )}

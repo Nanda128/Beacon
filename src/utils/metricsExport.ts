@@ -1,6 +1,7 @@
-import type {MissionMetricsExport, MissionMetricsSession} from "../domain/types/metrics";
+import type {MissionMetricsSession} from "../domain/types/metrics";
 import {roundMetricsSession} from "../domain/metrics/collector";
 import type {NasaTlxAssessment} from "../domain/types/tlx";
+import {getDashboardSummaryFromSession} from "./dashboardMetrics";
 
 const escapeCsv = (value: unknown) => {
     const stringValue = value == null ? "" : String(value);
@@ -21,58 +22,28 @@ const downloadBlob = (content: string, filename: string, mimeType: string) => {
 };
 
 const summaryRows = (session: MissionMetricsSession) => {
-    const summary = roundMetricsSession(session).summary;
+    const roundedSession = roundMetricsSession(session);
+    const dashboardSummary = getDashboardSummaryFromSession(roundedSession);
     return [
-        ["metric", "value"],
-        ["sessionId", session.sessionId],
-        ["scenarioName", session.scenarioName],
-        ["seed", session.seed],
-        ["missionDurationMs", summary.missionDurationMs],
-        ["anomaliesDetected", summary.anomaliesDetected],
-        ["totalRealAnomalies", summary.totalRealAnomalies],
-        ["anomaliesDetectedPct", summary.anomaliesDetectedPct],
-        ["weightedDetectionPct", summary.weightedDetectionPct],
-        ["timeToFirstDetectionMs", summary.timeToFirstDetectionMs ?? ""],
-        ["meanDetectionOpportunityLatencyMs", summary.meanDetectionOpportunityLatencyMs ?? ""],
-        ["falsePositiveCount", summary.falsePositiveCount],
-        ["falseNegativeCount", summary.falseNegativeCount],
-        ["falseContactRate", summary.falseContactRate],
-        ["avgScanCertaintyPct", summary.avgScanCertaintyPct],
-        ["coveragePct", summary.coveragePct],
-        ["areaCoveredSqKm", summary.areaCoveredSqKm],
-        ["avgCoverageVisitsPerVisitedCell", summary.avgCoverageVisitsPerVisitedCell],
-        ["alertCount", summary.alertCount],
-        ["alertBurdenPerMin", summary.alertBurdenPerMin],
-        ["peakUnacknowledgedAlerts", summary.peakUnacknowledgedAlerts],
-        ["avgAckLatencyMs", summary.avgAckLatencyMs ?? ""],
-        ["manualCommandCount", summary.manualCommandCount],
-        ["manualCommandsPerMin", summary.manualCommandsPerMin],
-        ["manualControlPct", summary.manualControlPct],
-        ["operatorLoadIndex", summary.operatorLoadIndex],
-        ["operatorLoadPeak", summary.operatorLoadPeak],
-        ["commsConnectedPct", summary.commsConnectedPct],
-        ["commsDisruptionPct", summary.commsDisruptionPct],
-        ["packetDropPct", summary.packetDropPct],
-        ["avgQueueDepth", summary.avgQueueDepth],
-        ["avgLatencyMs", summary.avgLatencyMs],
-        ["batteryWarningCount", summary.batteryWarningCount],
-        ["batteryEmergencyCount", summary.batteryEmergencyCount],
-        ["missionSuccessIndex", summary.missionSuccessIndex],
+        ["metricId", "metric", "value", "displayValue"],
+        ...dashboardSummary.map((metric) => [metric.id, metric.label, metric.value ?? "", metric.displayValue]),
     ];
 };
 
 const rowsToCsv = (rows: unknown[][]) => rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
 
-export function createMissionMetricsExport(session: MissionMetricsSession): MissionMetricsExport {
+export function createMissionMetricsExport(session: MissionMetricsSession) {
+    const roundedSession = roundMetricsSession(session);
     return {
         exportedAt: new Date().toISOString(),
-        session: roundMetricsSession(session),
+        session: roundedSession,
+        dashboardSummary: getDashboardSummaryFromSession(roundedSession),
     };
 }
 
 export type CombinedDebriefExport = {
     exportedAt: string;
-    mission: MissionMetricsExport;
+    mission: ReturnType<typeof createMissionMetricsExport>;
     nasaTlx?: NasaTlxAssessment;
 };
 
@@ -187,28 +158,32 @@ export function downloadCombinedDebriefJSON(session: MissionMetricsSession, nasa
 }
 
 export function downloadCombinedDebriefCSV(session: MissionMetricsSession, nasaTlx?: NasaTlxAssessment) {
-    const rows: unknown[][] = [["section", "metric", "value"]];
+    const rows: unknown[][] = [["section", "metricId", "metric", "value", "displayValue"]];
 
-    summaryRows(session).slice(1).forEach(([metric, value]) => {
-        rows.push(["mission", metric, value]);
+    rows.push(["mission-info", "session-id", "Session ID", session.sessionId, session.sessionId]);
+    rows.push(["mission-info", "scenario-name", "Scenario", session.scenarioName, session.scenarioName]);
+    rows.push(["mission-info", "seed", "Seed", session.seed, session.seed]);
+
+    summaryRows(session).slice(1).forEach(([metricId, metric, value, displayValue]) => {
+        rows.push(["mission-metric", metricId, metric, value, displayValue]);
     });
 
     if (!nasaTlx) {
-        rows.push(["nasa-tlx", "status", "skipped"]);
+        rows.push(["nasa-tlx", "status", "Status", "skipped", "skipped"]);
     } else {
-        rows.push(["nasa-tlx", "status", "completed"]);
-        rows.push(["nasa-tlx", "mode", nasaTlx.mode]);
-        rows.push(["nasa-tlx", "completedAt", new Date(nasaTlx.completedAt).toISOString()]);
-        rows.push(["nasa-tlx", "weightedScore", nasaTlx.result.weightedScore]);
-        rows.push(["nasa-tlx", "weightedBand", nasaTlx.result.band]);
-        rows.push(["nasa-tlx", "pairCount", nasaTlx.result.pairCount]);
+        rows.push(["nasa-tlx", "status", "Status", "completed", "completed"]);
+        rows.push(["nasa-tlx", "mode", "Mode", nasaTlx.mode, nasaTlx.mode]);
+        rows.push(["nasa-tlx", "completed-at", "Completed at", new Date(nasaTlx.completedAt).toISOString(), new Date(nasaTlx.completedAt).toISOString()]);
+        rows.push(["nasa-tlx", "weighted-score", "Weighted score", nasaTlx.result.weightedScore, nasaTlx.result.weightedScore]);
+        rows.push(["nasa-tlx", "weighted-band", "Weighted band", nasaTlx.result.band, nasaTlx.result.band]);
+        rows.push(["nasa-tlx", "pair-count", "Pair count", nasaTlx.result.pairCount, nasaTlx.result.pairCount]);
 
         nasaTlx.result.dimensions.forEach((dimension) => {
-            rows.push(["nasa-tlx-dimension", dimension.id, dimension.value]);
+            rows.push(["nasa-tlx-dimension", dimension.id, dimension.label, dimension.value, dimension.value]);
         });
 
         nasaTlx.result.weights.forEach((weight) => {
-            rows.push(["nasa-tlx-weight", weight.id, weight.weight]);
+            rows.push(["nasa-tlx-weight", weight.id, weight.id, weight.weight, weight.weight]);
         });
     }
 

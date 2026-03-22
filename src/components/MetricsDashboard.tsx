@@ -20,13 +20,6 @@ const formatPercent = (value: number, digits = 0) => `${value.toFixed(digits)}%`
 const formatPerMinute = (value: number) => `${value.toFixed(1)}/min`;
 const formatMs = (value: number) => `${Math.round(value)} ms`;
 
-const loadBand = (value: number) => {
-    if (value >= 75) return {label: "Critical", className: "critical"};
-    if (value >= 55) return {label: "High", className: "high"};
-    if (value >= 35) return {label: "Moderate", className: "medium"};
-    return {label: "Low", className: "low"};
-};
-
 function MiniSeriesChart({
                              title,
                              color,
@@ -99,7 +92,6 @@ export default function MetricsDashboard({
                                              onExportEventsCSV,
                                          }: MetricsDashboardProps) {
     const {summary, timeline, metricCatalog, events} = metrics;
-    const load = loadBand(summary.operatorLoadIndex);
 
     return (
         <div className="panel-card metrics-dashboard" aria-labelledby="metrics-dashboard-heading">
@@ -123,39 +115,40 @@ export default function MetricsDashboard({
 
             <div className="metrics-summary-grid">
                 <div className="metric-card emphasis">
-                    <div className="metric-label">Mission success</div>
-                    <div className="metric-value">{summary.missionSuccessIndex}</div>
-                    <div className="metric-hint">Composite of weighted detection, coverage, false contacts, and operator
-                        load.
+                    <div className="metric-label">Detection rate</div>
+                    <div className="metric-value">{formatPercent(summary.anomaliesDetectedPct)}</div>
+                    <div className="metric-hint">
+                        {summary.anomaliesDetected}/{summary.totalRealAnomalies} real anomalies found
+                        · first find {formatDuration(summary.timeToFirstDetectionMs)}
                     </div>
                 </div>
                 <div className="metric-card">
-                    <div className="metric-label">Weighted detection</div>
-                    <div className="metric-value">{formatPercent(summary.weightedDetectionPct)}</div>
-                    <div className="metric-hint">{summary.anomaliesDetected}/{summary.totalRealAnomalies} real anomalies
-                        found · first find {formatDuration(summary.timeToFirstDetectionMs)}</div>
+                    <div className="metric-label">Time to first detection</div>
+                    <div className="metric-value">{formatDuration(summary.timeToFirstDetectionMs)}</div>
+                    <div className="metric-hint">Time from mission start to first real anomaly detection.</div>
                 </div>
                 <div className="metric-card">
-                    <div className="metric-label">Coverage efficiency</div>
+                    <div className="metric-label">Coverage</div>
                     <div className="metric-value">{formatPercent(summary.coveragePct)}</div>
                     <div className="metric-hint">{summary.areaCoveredSqKm.toFixed(2)} km² scanned
                         · {summary.avgCoverageVisitsPerVisitedCell.toFixed(1)} passes/cell
                     </div>
                 </div>
                 <div className="metric-card">
-                    <div className="metric-label">Operator load proxy</div>
-                    <div className={`metric-value metric-load ${load.className}`}>{summary.operatorLoadIndex}</div>
-                    <div className="metric-hint">{load.label} · alerts {formatPerMinute(summary.alertBurdenPerMin)} ·
-                        manual {formatPerMinute(summary.manualCommandsPerMin)}</div>
+                    <div className="metric-label">Alerts per minute</div>
+                    <div className="metric-value">{formatPerMinute(summary.alertBurdenPerMin)}</div>
+                    <div className="metric-hint">{summary.alertCount} total alerts ·
+                        peak {summary.peakUnacknowledgedAlerts} unacknowledged
+                    </div>
                 </div>
                 <div className="metric-card">
-                    <div className="metric-label">Comms resilience</div>
+                    <div className="metric-label">Comms uptime</div>
                     <div className="metric-value">{formatPercent(summary.commsConnectedPct)}</div>
                     <div className="metric-hint">Drop {formatPercent(summary.packetDropPct, 1)} ·
                         queue {summary.avgQueueDepth.toFixed(1)} · latency {formatMs(summary.avgLatencyMs)}</div>
                 </div>
                 <div className="metric-card">
-                    <div className="metric-label">Detection quality</div>
+                    <div className="metric-label">False contacts</div>
                     <div className="metric-value">{summary.falsePositiveCount + summary.falseNegativeCount}</div>
                     <div className="metric-hint">FP {summary.falsePositiveCount} · FN {summary.falseNegativeCount} ·
                         certainty {formatPercent(summary.avgScanCertaintyPct)}</div>
@@ -165,28 +158,28 @@ export default function MetricsDashboard({
             <div className="metrics-chart-grid">
                 <MiniSeriesChart
                     title="Coverage"
-                    color="#22c55e"
+                                color={'var(--color-success)'}
                     samples={timeline}
                     accessor={(sample) => sample.coveragePct}
                     latestLabel={formatPercent(summary.coveragePct)}
                 />
                 <MiniSeriesChart
-                    title="Weighted detection"
-                    color="#38bdf8"
+                    title="Detection rate"
+                                color={'var(--color-primary)'}
                     samples={timeline}
-                    accessor={(sample) => sample.weightedDetectionPct}
-                    latestLabel={formatPercent(summary.weightedDetectionPct)}
+                    accessor={(sample) => sample.detectedPct}
+                    latestLabel={formatPercent(summary.anomaliesDetectedPct)}
                 />
                 <MiniSeriesChart
-                    title="Operator load"
-                    color="#f59e0b"
+                    title="Alerts per minute"
+                                color={'var(--color-warning)'}
                     samples={timeline}
-                    accessor={(sample) => sample.operatorLoadIndex}
-                    latestLabel={`${summary.operatorLoadIndex}`}
+                    accessor={(sample) => sample.alertBurdenPerMin}
+                    latestLabel={formatPerMinute(summary.alertBurdenPerMin)}
                 />
                 <MiniSeriesChart
-                    title="Connected drones"
-                    color="#a78bfa"
+                    title="Comms uptime"
+                                color={'var(--color-primary-hover)'}
                     samples={timeline}
                     accessor={(sample) => sample.connectedPct}
                     latestLabel={formatPercent(summary.commsConnectedPct)}
@@ -205,6 +198,8 @@ export default function MetricsDashboard({
                                 </div>
                                 <div className="metrics-definition-objective">{metric.objective}</div>
                                 <div className="metrics-definition-rationale">{metric.rationale}</div>
+                                <div className="metrics-definition-calc-label">How its calculated</div>
+                                <div className="metrics-definition-calc">{metric.calculation}</div>
                             </div>
                         ))}
                     </div>

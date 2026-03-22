@@ -20,7 +20,7 @@
       "windKts": 5,
       "visibilityKm": 20,
       "surfaceTempC": 21,
-      "description": "Calm seas, light breeze — nominal SAR conditions"
+      "description": "Calm seas, light breeze, nominal SAR conditions"
     },
     "water": {
       "tileSize": 256,

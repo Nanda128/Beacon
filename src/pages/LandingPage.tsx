@@ -24,27 +24,17 @@ export default function LandingPage() {
     const [customScenarios, setCustomScenarios] = useState<SavedCustomScenario[]>(loadCustomScenarios);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const [saveLabel, setSaveLabel] = useState("");
-    const [filterTag, setFilterTag] = useState<string | null>(null);
-
-    const allTags = useMemo(() => {
-        const set = new Set<string>();
-        for (const p of scenarioPresets) p.tags.forEach((t) => set.add(t));
-        return Array.from(set).sort();
-    }, []);
 
     const groupedPresets = useMemo(() => {
-        const filtered = filterTag
-            ? scenarioPresets.filter((p) => p.tags.includes(filterTag))
-            : scenarioPresets;
         const groups = new Map<string, ScenarioPreset[]>();
         for (const cat of categoryOrder) groups.set(cat, []);
-        for (const p of filtered) {
+        for (const p of scenarioPresets) {
             const arr = groups.get(p.category) ?? [];
             arr.push(p);
             groups.set(p.category, arr);
         }
         return groups;
-    }, [filterTag]);
+    }, []);
 
 
     const handleSelectPreset = useCallback((preset: ScenarioPreset) => {
@@ -117,23 +107,6 @@ export default function LandingPage() {
                         </p>
                     </section>
 
-                    <div className="scenario-tag-bar" role="toolbar" aria-label="Filter by tag">
-                        <button
-                            className={`scenario-tag-chip${filterTag === null ? " scenario-tag-chip-active" : ""}`}
-                            onClick={() => setFilterTag(null)}
-                        >
-                            All
-                        </button>
-                        {allTags.map((tag) => (
-                            <button
-                                key={tag}
-                                className={`scenario-tag-chip${filterTag === tag ? " scenario-tag-chip-active" : ""}`}
-                                onClick={() => setFilterTag(filterTag === tag ? null : tag)}
-                            >
-                                {tag}
-                            </button>
-                        ))}
-                    </div>
 
                     {categoryOrder.map((cat) => {
                         const presets = groupedPresets.get(cat);
@@ -158,11 +131,6 @@ export default function LandingPage() {
                                                 Sea state {preset.scenario.sector.conditions.seaState} · Wind{" "}
                                                 {preset.scenario.sector.conditions.windKts} kts ·{" "}
                                                 {anomalyCount(preset)} anomalies · {preset.recommendedDroneCount} drones rec.
-                                            </span>
-                                            <span className="preset-card-tags">
-                                                {preset.tags.map((t) => (
-                                                    <span key={t} className="preset-tag">{t}</span>
-                                                ))}
                                             </span>
                                         </button>
                                     ))}
@@ -237,10 +205,14 @@ export default function LandingPage() {
                         )}
                     </section>
 
-                    <section className="landing-cta" aria-label="Begin">
+                    <section className="landing-cta" aria-label="Navigation">
                         <button className="btn btn-large" onClick={handleBeginSetup}
                                 data-tutorial-id="landing-begin-setup">
-                            Begin Setup →
+                            Begin Setup
+                        </button>
+                        <button className="btn btn-large" onClick={() => navigate("/management")}
+                                style={{marginTop: 12}}>
+                            View Management Dashboard
                         </button>
                     </section>
                 </div>

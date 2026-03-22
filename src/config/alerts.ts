@@ -20,27 +20,27 @@ export type AlertSeverityStyle = {
 
 export const alertSeverityStyles: Record<AlertSeverity, AlertSeverityStyle> = {
     critical: {
-        color: "#ef4444",
-        fill: "rgba(239,68,68,0.25)",
-        border: "rgba(239,68,68,0.6)",
+        color: "var(--color-danger)",
+        fill: "var(--color-danger-bg)",
+        border: "var(--color-danger-border)",
         pulseMs: 400,
         label: "WARNING"
     },
     high: {
-        color: "#f59e0b",
-        fill: "rgba(245,158,11,0.20)",
-        border: "rgba(245,158,11,0.5)",
+        color: "var(--color-warning)",
+        fill: "var(--color-warning-bg)",
+        border: "var(--color-warning-border)",
         pulseMs: 700,
         label: "CAUTION"
     },
     medium: {
-        color: "#38bdf8",
-        fill: "rgba(56,189,248,0.15)",
-        border: "rgba(56,189,248,0.4)",
+        color: "var(--color-primary)",
+        fill: "var(--color-primary-ghost)",
+        border: "var(--color-border-subtle)",
         pulseMs: 1200,
         label: "ADVISORY"
     },
-    low: {color: "#22c55e", fill: "rgba(34,197,94,0.12)", border: "rgba(34,197,94,0.35)", pulseMs: 0, label: "STATUS"},
+    low: {color: "var(--color-success)", fill: "var(--color-success-bg)", border: "var(--color-success-border)", pulseMs: 0, label: "STATUS"},
 };
 
 export const alertCategoryLabels: Record<AlertCategory, string> = {

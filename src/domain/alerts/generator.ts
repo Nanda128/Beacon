@@ -69,7 +69,7 @@ export function createCommDegradationAlert(drone: DroneState, hub: Vec2, now: nu
             droneId: drone.id,
             droneCallsign: drone.callsign,
             position: drone.position,
-            message: `${drone.callsign} comm ${label} — signal ${Math.round(quality * 100)}% · ${Math.round(drone.comms.latencyMs)} ms latency · ${(drone.comms.distanceFromHub / 1000).toFixed(1)} km from hub.`,
+            message: `${drone.callsign} comm ${label} - signal ${Math.round(quality * 100)}% · ${Math.round(drone.comms.latencyMs)} ms latency · ${(drone.comms.distanceFromHub / 1000).toFixed(1)} km from hub.`,
             acknowledged: false,
         };
     }
@@ -86,7 +86,7 @@ export function createCommDegradationAlert(drone: DroneState, hub: Vec2, now: nu
         droneId: drone.id,
         droneCallsign: drone.callsign,
         position: drone.position,
-        message: `${drone.callsign} comm degraded — ${(distFromHub / 1000).toFixed(1)} km from hub.`,
+        message: `${drone.callsign} comm degraded - ${(distFromHub / 1000).toFixed(1)} km from hub.`,
         acknowledged: false,
     };
 }
@@ -173,7 +173,7 @@ export function generateAlertsFromTick(input: AlertTickInput): Alert[] {
                     droneId: drone.id,
                     droneCallsign: drone.callsign,
                     position: drone.position,
-                    message: `${drone.callsign} malfunction — drone in error state.`,
+                    message: `${drone.callsign} malfunction: drone in error state.`,
                     acknowledged: false,
                 });
             }

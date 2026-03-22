@@ -1,4 +1,5 @@
 import {Navigate, useNavigate} from "react-router-dom";
+import {useEffect} from "react";
 import {AppShell} from "../components/layout/AppShell";
 import {PageTransition} from "../components/layout/PageTransition";
 import MetricsDashboard from "../components/MetricsDashboard";
@@ -11,6 +12,7 @@ import {
     downloadMissionMetricsSummaryCSV,
     downloadMissionMetricsTimelineCSV,
 } from "../utils/metricsExport";
+import {saveDebrief} from "../utils/debriefStorage";
 
 const tlxBandLabel: Record<string, string> = {
     low: "Low",
@@ -28,6 +30,12 @@ export default function ResultsPage() {
     }
 
     const {metricsSnapshot, nasaTlxAssessment} = postMission;
+
+    useEffect(() => {
+        if (metricsSnapshot) {
+            saveDebrief(metricsSnapshot, nasaTlxAssessment);
+        }
+    }, [metricsSnapshot, nasaTlxAssessment]);
 
     return (
         <AppShell subtitle="Mission Results">
@@ -51,6 +59,11 @@ export default function ResultsPage() {
                                         <div className="metric-hint">
                                             Band: {tlxBandLabel[nasaTlxAssessment.result.band] ?? nasaTlxAssessment.result.band}
                                             {" "}· Pairwise {nasaTlxAssessment.result.pairCount}/15
+                                        </div>
+                                        <div className="metrics-definition-calc-label">How its calculated</div>
+                                        <div className="metrics-definition-calc">
+                                            Sum of (dimension score x pairwise weight) divided by completed pairwise
+                                            comparisons.
                                         </div>
                                     </div>
                                     <div className="metric-card">
@@ -76,6 +89,10 @@ export default function ResultsPage() {
                                                 <div className="progress-track" aria-label={`${dimension.label} score`}>
                                                     <div className="progress-fill"
                                                          style={{width: `${dimension.value}%`}}/>
+                                                </div>
+                                                <div className="metrics-definition-calc-label">How its calculated</div>
+                                                <div className="metrics-definition-calc">
+                                                    Contribution = {dimension.value} x {weight ?? 0} weight points.
                                                 </div>
                                             </div>
                                         );

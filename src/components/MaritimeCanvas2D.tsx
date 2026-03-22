@@ -417,12 +417,12 @@ export default function MaritimeCanvas2D({
                         {metricsSummary && (
                             <>
                                 <div>
-                                    <strong>Search efficiency</strong> {Math.round(metricsSummary.weightedDetectionPct)}%
-                                    weighted detect
+                                    <strong>Detection rate</strong> {Math.round(metricsSummary.anomaliesDetectedPct)}%
+                                    · {metricsSummary.anomaliesDetected}/{metricsSummary.totalRealAnomalies}
                                 </div>
                                 <div>
-                                    <strong>Operator load</strong> {metricsSummary.operatorLoadIndex}/100
-                                    · {metricsSummary.peakUnacknowledgedAlerts} peak unacked
+                                    <strong>Alerts/min</strong> {metricsSummary.alertBurdenPerMin.toFixed(1)}
+                                    · peak {metricsSummary.peakUnacknowledgedAlerts} unacked
                                 </div>
                             </>
                         )}

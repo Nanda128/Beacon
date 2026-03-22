@@ -20,7 +20,7 @@
       "windKts": 28,
       "visibilityKm": 6,
       "surfaceTempC": 15,
-      "description": "High sea state, strong wind, reduced visibility — multiple simultaneous alerts expected"
+      "description": "High sea state, strong wind, reduced visibility, multiple simultaneous alerts expected"
     },
     "water": {
       "tileSize": 256,

@@ -1,7 +1,7 @@
 /**
  * Design-token system for Beacon.
  *
- * Light-mode default follows Piepenbrock et al. (2013) — positive-polarity
+ * Light-mode default follows Piepenbrock et al. (2013) - positive-polarity
  * displays reduce error rates for sustained monitoring tasks.
  *
  * Core text-on-background pairs are validated by scripts/contrast-audit.mjs.
@@ -23,9 +23,9 @@ export const lightTokens: Record<string, string> = {
     "--color-border-subtle": "#7B8798",
     "--color-border-strong": "#64748B",
 
-    "--color-text": "#1E293B",
-    "--color-text-secondary": "#475569",
-    "--color-text-muted": "#627186",
+    "--color-text": "#0B1324",
+    "--color-text-secondary": "#334155",
+    "--color-text-muted": "#475569",
 
     "--color-primary": "#0D7377",
     "--color-primary-hover": "#0A5C5F",
@@ -61,6 +61,16 @@ export const lightTokens: Record<string, string> = {
     "--color-drone-pill-border": "rgba(13,115,119,0.30)",
     "--color-drone-pill-active": "rgba(217,119,6,0.14)",
     "--color-drone-pill-active-border": "rgba(217,119,6,0.50)",
+    "--overlay-box-border": "rgba(148,163,184,0.24)",
+    "--overlay-box-bg": "rgba(15,23,42,0.72)",
+    "--overlay-box-text": "rgba(226,232,240,0.98)",
+    "--overlay-box-ghost-btn-bg": "rgba(255,255,255,0.08)",
+    "--overlay-box-ghost-btn-text": "rgba(226,232,240,0.92)",
+    "--overlay-box-ghost-btn-border": "rgba(226,232,240,0.18)",
+    "--overlay-box-strong-text": "#f8fafc",
+
+    "--badge-text": "#ffffff",
+    "--btn-delete-hover-text": "#ffffff",
 };
 
 export const darkTokens: Record<string, string> = {
@@ -111,4 +121,15 @@ export const darkTokens: Record<string, string> = {
     "--color-drone-pill-border": "rgba(59,130,246,0.35)",
     "--color-drone-pill-active": "rgba(234,179,8,0.16)",
     "--color-drone-pill-active-border": "rgba(234,179,8,0.65)",
+
+    "--overlay-box-border": "rgba(148,163,184,0.12)",
+    "--overlay-box-bg": "rgba(2,6,23,0.72)",
+    "--overlay-box-text": "rgba(226,232,240,0.98)",
+    "--overlay-box-ghost-btn-bg": "rgba(255,255,255,0.04)",
+    "--overlay-box-ghost-btn-text": "rgba(226,232,240,0.92)",
+    "--overlay-box-ghost-btn-border": "rgba(226,232,240,0.12)",
+    "--overlay-box-strong-text": "#ffffff",
+
+    "--badge-text": "#ffffff",
+    "--btn-delete-hover-text": "#ffffff",
 };

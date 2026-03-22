@@ -11,6 +11,9 @@ const formatDuration = (ms: number) => {
     return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 };
 
+const formatPercent = (value: number) => `${value.toFixed(0)}%`;
+const formatPerMinute = (value: number) => `${value.toFixed(1)}/min`;
+
 export default function EndMissionPage() {
     const navigate = useNavigate();
     const {postMission, setNasaTlxOptIn, setPhase} = useMission();
@@ -34,21 +37,33 @@ export default function EndMissionPage() {
 
                         <div className="metrics-summary-grid" style={{marginTop: 16}}>
                             <div className="metric-card emphasis">
-                                <div className="metric-label">Mission success</div>
-                                <div className="metric-value">{summary.missionSuccessIndex}</div>
-                                <div className="metric-hint">Composite mission effectiveness score.</div>
+                                <div className="metric-label">Detection rate</div>
+                                <div className="metric-value">{formatPercent(summary.anomaliesDetectedPct)}</div>
+                                <div
+                                    className="metric-hint">{summary.anomaliesDetected}/{summary.totalRealAnomalies} real
+                                    anomalies found.
+                                </div>
+                                <div className="metrics-definition-calc-label">How its calculated</div>
+                                <div className="metrics-definition-calc">
+                                    (Detected real anomalies / total real anomalies) x 100.
+                                </div>
                             </div>
                             <div className="metric-card">
                                 <div className="metric-label">Duration</div>
                                 <div className="metric-value">{formatDuration(summary.missionDurationMs)}</div>
                                 <div className="metric-hint">Total mission runtime.</div>
+                                <div className="metrics-definition-calc-label">How its calculated</div>
+                                <div className="metrics-definition-calc">End timestamp - mission start timestamp.</div>
                             </div>
                             <div className="metric-card">
-                                <div className="metric-label">Weighted detection</div>
-                                <div className="metric-value">{summary.weightedDetectionPct.toFixed(0)}%</div>
-                                <div
-                                    className="metric-hint">{summary.anomaliesDetected}/{summary.totalRealAnomalies} real
-                                    anomalies found.
+                                <div className="metric-label">Alerts per minute</div>
+                                <div className="metric-value">{formatPerMinute(summary.alertBurdenPerMin)}</div>
+                                <div className="metric-hint">{summary.alertCount} total alerts ·
+                                    peak {summary.peakUnacknowledgedAlerts} unacknowledged.
+                                </div>
+                                <div className="metrics-definition-calc-label">How its calculated</div>
+                                <div className="metrics-definition-calc">
+                                    Total alerts raised / mission duration in minutes.
                                 </div>
                             </div>
                         </div>
