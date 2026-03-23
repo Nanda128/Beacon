@@ -15,6 +15,8 @@ import {
     type SavedCustomScenario,
 } from "../data/scenarios";
 import {useMission} from "../context/MissionContext";
+import {generateSector, defaultAnomalyConfig} from "../domain/environment/generator";
+import {defaultAnomalyConfigOverride, defaultBoundsKm, randomSeed} from "../config/constants";
 
 export default function LandingPage() {
     const navigate = useNavigate();
@@ -82,6 +84,25 @@ export default function LandingPage() {
         applyPreset("simple");
         applyPresetDroneSet("simple");
     };
+
+    const handleNewBlankScenario = useCallback(() => {
+        const blankConfig = {...defaultAnomalyConfig, ...defaultAnomalyConfigOverride};
+        for (const key of Object.keys(blankConfig) as (keyof typeof blankConfig)[]) {
+            blankConfig[key] = {
+                ...blankConfig[key],
+                count: 0,
+            };
+        }
+        const blankScenario = generateSector({
+            seed: randomSeed(),
+            boundsKm: defaultBoundsKm,
+            anomalyConfig: blankConfig,
+        });
+        applyScenario(blankScenario, "Created new blank scenario.");
+        applyPresetDroneSet("simple");
+        setPhase("setup");
+        navigate("/setup");
+    }, [applyScenario, applyPresetDroneSet, navigate, setPhase]);
 
     const anomalyCount = (p: ScenarioPreset) => {
         const c = p.scenario.anomalies.config;
@@ -209,6 +230,10 @@ export default function LandingPage() {
                         <button className="btn btn-large" onClick={handleBeginSetup}
                                 data-tutorial-id="landing-begin-setup">
                             Begin Setup
+                        </button>
+                        <button className="btn btn-large"
+                                onClick={handleNewBlankScenario}>
+                            New Blank Scenario
                         </button>
                         <button className="btn btn-large" onClick={() => navigate("/management")}
                                 style={{marginTop: 12}}>

@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from "react";
-import type {MaritimeScenario, Vec2} from "../domain/types/environment";
+import type {EnvironmentalConditions, MaritimeScenario, Vec2} from "../domain/types/environment";
 import type {AnomalyType} from "../domain/types/environment";
 import type {DroneState} from "../domain/types/drone";
 import type {Alert} from "../domain/types/alert";
@@ -60,6 +60,11 @@ export type MaritimeCanvas2DProps = {
     alerts?: Alert[];
     coverageHeatmap?: CoverageHeatmapGrid;
     metricsSummary?: MissionMetricsSummary;
+    /**
+     * Active environmental conditions for this mission (after any Setup overrides).
+     * If omitted, falls back to scenario.sector.conditions.
+     */
+    conditionsOverride?: EnvironmentalConditions;
 };
 
 export default function MaritimeCanvas2D({
@@ -83,6 +88,7 @@ export default function MaritimeCanvas2D({
                                              alerts = [],
                                              coverageHeatmap,
                                              metricsSummary,
+                                             conditionsOverride,
                                          }: MaritimeCanvas2DProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -302,7 +308,8 @@ export default function MaritimeCanvas2D({
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, size.width, size.height);
             drawWater(ctx, size, cameraRef.current, waterPatternRef.current);
-            drawSurfaceDynamics(ctx, size, scenario.sector.conditions, timestamp);
+            const activeConditions = conditionsOverride ?? scenario.sector.conditions;
+            drawSurfaceDynamics(ctx, size, activeConditions, timestamp);
             drawGrid(ctx, size, cameraRef.current, gridSpacing);
             drawAxes(ctx, size, cameraRef.current);
             drawCoverageHeatmap(ctx, size, cameraRef.current, scenario.sector.bounds, coverageHeatmap);
@@ -325,7 +332,7 @@ export default function MaritimeCanvas2D({
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts, coverageHeatmap]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts, coverageHeatmap, conditionsOverride]);
 
     useEffect(() => {
         const handleGlobalPointerDown = (event: PointerEvent) => {
@@ -379,11 +386,9 @@ export default function MaritimeCanvas2D({
                         )}
                         <div><strong>Seed</strong> {scenario.seed}</div>
                         <div>
-                            <strong>Conditions</strong> SS {scenario.sector.conditions.seaState} · {scenario.sector.conditions.windKts} kts
-                            {typeof scenario.sector.conditions.windDirectionDeg === "number"
-                                ? ` @ ${Math.round(scenario.sector.conditions.windDirectionDeg)} deg`
-                                : ""}
-                            · {scenario.sector.conditions.visibilityKm} km vis
+                            <strong>Conditions</strong> SS {(conditionsOverride ?? scenario.sector.conditions).seaState} · {(conditionsOverride ?? scenario.sector.conditions).windKts} kts
+                            {` @ ${Math.round((conditionsOverride ?? scenario.sector.conditions).windDirectionDeg!)} deg`}
+                            · {(conditionsOverride ?? scenario.sector.conditions).visibilityKm} km vis
                         </div>
                         <div>
                             <strong>Anomalies</strong> {scenario.anomalies.items.filter((a) => a.detected).length}/{scenario.anomalies.items.length} detected

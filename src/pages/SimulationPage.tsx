@@ -98,7 +98,8 @@ export default function SimulationPage() {
         alertAudioEnabled, setAlertAudioEnabled, unacknowledgedAlertCount,
         manualInterventionEnabled, setManualInterventionEnabled,
         fogOfWarEnabled, setFogOfWarEnabled,
-        commsConfig, setCommsConfig,
+        commsConfig,
+        conditions,
         swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         spawnPoints, selectedSpawnPointId, setSelectedSpawnPointId,
@@ -445,7 +446,6 @@ export default function SimulationPage() {
     }, [coverageOverlap, sensorSettings.rangeMeters]);
 
     const environmentEffects = useMemo(() => {
-        const conditions = scenario.sector.conditions;
         const sensorMultiplier = computeEnvironmentalSensorMultiplier(conditions);
         const batteryDrainMultiplier = computeEnvironmentalBatteryDrainMultiplier(conditions);
         const airborne = drones.filter((drone) => drone.status !== "landed" && drone.speedKts > 0);
@@ -472,7 +472,7 @@ export default function SimulationPage() {
             windDeltaPct,
             windState,
         };
-    }, [drones, scenario.sector.conditions]);
+    }, [conditions, drones]);
 
     const recomputeVoronoi = useCallback(() => {
         const cells = computeVoronoiCells(drones, scenario.sector.bounds, selectedDroneIds);
@@ -643,7 +643,7 @@ export default function SimulationPage() {
                 const swarmParams = swarmParamsRef.current;
                 const baseDrones = dronesRef.current;
                 const cc = commsConfigRef.current;
-                const envConditions = scenarioRef.current.sector.conditions;
+                const envConditions = conditions;
                 const batteryDrainMultiplier = computeEnvironmentalBatteryDrainMultiplier(envConditions);
                 const swarmAdjustments = swarmEnabledGlobal ? computeSwarmAdjustments(baseDrones, swarmParams, bounds, dtSeconds) : {};
 
@@ -987,7 +987,7 @@ export default function SimulationPage() {
             cancelAnimationFrame(raf);
             lastFrameRef.current = null;
         };
-    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal]);
+    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, computeEmergencyReserve, computeReturnMinutes, hub.position.x, hub.position.y, setMessage, scenario.sector.bounds, swarmEnabledGlobal, conditions]);
 
     useEffect(() => {
         if (!sensorsEnabled) return;
@@ -1002,8 +1002,8 @@ export default function SimulationPage() {
                 const currentDrones = dronesRef.current;
                 const cc = commsConfigRef.current;
                 if (!currentScenario || currentDrones.length === 0) return;
-                const environmentalSensorMultiplier = computeEnvironmentalSensorMultiplier(currentScenario.sector.conditions);
-                const environmentalFalsePositiveMultiplier = computeEnvironmentalFalsePositiveMultiplier(currentScenario.sector.conditions);
+                const environmentalSensorMultiplier = computeEnvironmentalSensorMultiplier(conditions);
+                const environmentalFalsePositiveMultiplier = computeEnvironmentalFalsePositiveMultiplier(conditions);
                 let updatedItems = currentScenario.anomalies.items;
                 let changed = false;
                 const events: DetectionLogEntry[] = [];
@@ -1262,7 +1262,7 @@ export default function SimulationPage() {
             }
         }, sensorSettings.checkIntervalMs);
         return () => window.clearInterval(interval);
-    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies]);
+    }, [appendAlertsWithMetrics, appendLogWithMetrics, playForAlerts, clampToBounds, detectionProbability, sensorSettings.checkIntervalMs, sensorSettings.falsePositiveRatePerMinute, sensorSettings.rangeMeters, sensorsEnabled, setMessage, updateAnomalies, conditions]);
 
     const handleBackToSetup = () => {
         isTerminatingRef.current = true;
@@ -1372,6 +1372,7 @@ export default function SimulationPage() {
                                 fogOfWarEnabled={fogOfWarEnabled}
                                 scanValidationActive={scanValidationActive}
                                 alerts={alerts}
+                                conditionsOverride={conditions}
                                 {...canvasMetricsProps}
                             />
                             <div
@@ -1541,7 +1542,7 @@ export default function SimulationPage() {
                                                     const effectiveSpeed = computeWindAdjustedSpeedKts(
                                                         drone.speedKts,
                                                         drone.headingDeg,
-                                                        scenario.sector.conditions,
+                                                        conditions,
                                                     ).effectiveSpeedKts;
                                                     return (
                                                         <div key={drone.id} className="drone-pill-row" role="listitem">
@@ -1801,150 +1802,58 @@ export default function SimulationPage() {
                                     </ControlGrid>
 
                                     <Badge style={{marginTop: 16, marginBottom: 8}}>Communications</Badge>
-                                    <ControlGrid>
-                                        <Field label="Comms degradation">
-                                            <label style={{display: "flex", alignItems: "center", gap: 8}}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        enabled: e.target.checked
-                                                    }))}
-                                                />
-                                                <span>Simulate comm degradation</span>
-                                            </label>
-                                            <div className="field-hint" style={{marginTop: 4}}>
-                                                Models distance-based signal decay, packet loss, and latency per
-                                                Zulkifley et al. (2021).
-                                            </div>
-                                        </Field>
-                                        <Field label="Base latency (ms)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={0} max={200} step={1}
-                                                    value={commsConfig.baseLatencyMs}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        baseLatencyMs: Math.max(0, Number(e.target.value))
-                                                    }))}
-                                                    style={{width: 80}}
-                                                />
-                                                <span className="field-hint">C2 spec: &lt; 50 ms</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Max latency (ms)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={0} max={500} step={1}
-                                                    value={commsConfig.maxLatencyMs}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        maxLatencyMs: Math.max(0, Number(e.target.value))
-                                                    }))}
-                                                    style={{width: 80}}
-                                                />
-                                                <span className="field-hint">Measured: up to 94 ms</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Packet loss (%)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={0} max={50} step={0.1}
-                                                    value={Math.round(commsConfig.maxPacketLossPct * 1000) / 10}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        maxPacketLossPct: Math.min(0.5, Math.max(0, Number(e.target.value) / 100))
-                                                    }))}
-                                                    style={{width: 80}}
-                                                />
-                                                <span className="field-hint">Max at full degradation</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Degradation start (m)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={100} max={10000}
-                                                    step={100}
-                                                    value={commsConfig.degradationStartMeters}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        degradationStartMeters: Math.max(100, Number(e.target.value))
-                                                    }))}
-                                                    style={{width: 90}}
-                                                />
-                                                <span className="field-hint">Distance from hub</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Degradation full (m)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={500} max={20000}
-                                                    step={100}
-                                                    value={commsConfig.degradationFullMeters}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        degradationFullMeters: Math.max(500, Number(e.target.value))
-                                                    }))}
-                                                    style={{width: 90}}
-                                                />
-                                                <span className="field-hint">Max degradation distance</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Intermittent cycle (s)">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={0} max={120} step={1}
-                                                    value={commsConfig.intermittentCycleSec}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        intermittentCycleSec: Math.max(0, Number(e.target.value))
-                                                    }))}
-                                                    style={{width: 80}}
-                                                />
-                                                <span className="field-hint">0 = disabled</span>
-                                            </div>
-                                        </Field>
-                                        <Field label="Intermittent depth">
-                                            <div style={{display: "flex", gap: 8, alignItems: "center"}}>
-                                                <input
-                                                    className="field-input" type="number" min={0} max={100} step={5}
-                                                    value={Math.round(commsConfig.intermittentDepth * 100)}
-                                                    disabled={!commsConfig.enabled}
-                                                    onChange={(e) => setCommsConfig((prev) => ({
-                                                        ...prev,
-                                                        intermittentDepth: Math.min(1, Math.max(0, Number(e.target.value) / 100))
-                                                    }))}
-                                                    style={{width: 80}}
-                                                />
-                                                <span className="field-hint">% signal drop at trough</span>
-                                            </div>
-                                        </Field>
-                                    </ControlGrid>
-                                    {commsConfig.enabled && drones.some((d) => d.comms) && (
-                                        <div className="callout" role="status" style={{marginTop: 8}}>
-                                            <strong>Comms status:</strong>{" "}
-                                            {drones.filter((d) => d.comms?.connected).length}/{drones.length} connected
-                                            {" · "}
-                                            Queue: {commsQueueRef.current.length} pending
-                                            {" · "}
-                                            Buffered: {totalBufferedScanCount}
-                                            {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality) && (
-                                                <span
-                                                    style={{color: "var(--color-warning)"}}>{" · "}Sensors degraded on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality).length} drone(s)</span>
-                                            )}
-                                            {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality) && (
-                                                <span
-                                                    style={{color: "var(--color-danger)"}}>{" · "}Swarm disabled on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality).length} drone(s)</span>
+                                    <div className="field" aria-label="Communications summary">
+                                        <div className="field-label">Comms profile</div>
+                                        <div className="field-value" style={{fontSize: 12}}>
+                                            {commsConfig.enabled ? (
+                                                <>
+                                                    <div>
+                                                        <strong>Latency</strong> base {commsConfig.baseLatencyMs} ms ·
+                                                        max {commsConfig.maxLatencyMs} ms
+                                                    </div>
+                                                    <div>
+                                                        <strong>Packet loss</strong> up
+                                                        to {(commsConfig.maxPacketLossPct * 100).toFixed(1)}%
+                                                    </div>
+                                                    <div>
+                                                        <strong>Degradation
+                                                            band</strong> {commsConfig.degradationStartMeters}–{commsConfig.degradationFullMeters} m
+                                                        from hub
+                                                    </div>
+                                                    {commsConfig.intermittentCycleSec > 0 && (
+                                                        <div>
+                                                            <strong>Intermittent</strong> {commsConfig.intermittentCycleSec}s
+                                                            cycle ·
+                                                            depth {(commsConfig.intermittentDepth * 100).toFixed(0)}%
+                                                        </div>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <span>Comms degradation disabled (ideal link).</span>
                                             )}
                                         </div>
-                                    )}
+                                        <div className="field-hint" style={{marginTop: 4}}>
+                                            Configure communication degradation before launch on the Setup page.
+                                        </div>
+                                        {commsConfig.enabled && drones.some((d) => d.comms) && (
+                                            <div className="callout" role="status" style={{marginTop: 8}}>
+                                                <strong>Live status:</strong>{" "}
+                                                {drones.filter((d) => d.comms?.connected).length}/{drones.length} connected
+                                                {" · "}
+                                                Queue: {commsQueueRef.current.length} pending
+                                                {" · "}
+                                                Buffered: {totalBufferedScanCount}
+                                                {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality) && (
+                                                    <span
+                                                        style={{color: "var(--color-warning)"}}>{" · "}Sensors degraded on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.reducedSensorQuality).length} drone(s)</span>
+                                                )}
+                                                {drones.some((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality) && (
+                                                    <span
+                                                        style={{color: "var(--color-danger)"}}>{" · "}Swarm disabled on {drones.filter((d) => d.comms && d.comms.signalQuality < commsThresholds.swarmDisabledQuality).length} drone(s)</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
 
                                     <div className="meta-row" style={{marginTop: 12}}>
                                         <div><strong>Sector</strong> {sectorMeta.bounds.widthMeters / 1000} km

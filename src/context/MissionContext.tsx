@@ -1,6 +1,6 @@
 import type React from "react";
 import {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
-import type {DetectionLogEntry, SensorConfig, Vec2} from "../domain/types/environment";
+import type {DetectionLogEntry, EnvironmentalConditions, SensorConfig, Vec2} from "../domain/types/environment";
 import type {DroneState, SpawnPoint} from "../domain/types/drone";
 import type {Alert} from "../domain/types/alert";
 import {useScenario} from "../hooks/useScenario";
@@ -105,6 +105,17 @@ type MissionContextValue = {
     commsConfig: CommsConfig;
     setCommsConfig: React.Dispatch<React.SetStateAction<CommsConfig>>;
 
+    /**
+     * Mission-level overrides for seed/preset-derived environmental conditions.
+     * When non-empty, these are merged over scenario.sector.conditions to produce "conditions".
+     */
+    environmentOverrides: Partial<EnvironmentalConditions>;
+    setEnvironmentOverrides: React.Dispatch<React.SetStateAction<Partial<EnvironmentalConditions>>>;
+    /**
+     * Active environmental conditions for the current mission, after applying overrides.
+     */
+    conditions: EnvironmentalConditions;
+
     postMission: PostMissionState;
     finalizeMission: (input: {
         metrics: MissionMetricsSession;
@@ -196,6 +207,7 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
     const [fogOfWarEnabled, setFogOfWarEnabled] = useState(false);
     const [commsConfig, setCommsConfig] = useState<CommsConfig>({...defaultCommsConfig});
     const [postMission, setPostMission] = useState<PostMissionState>({...initialPostMissionState});
+    const [environmentOverrides, setEnvironmentOverrides] = useState<Partial<EnvironmentalConditions>>({});
 
     const swarmParamsRef = useRef<SwarmBehaviourParams>({
         safetyDistanceMeters: defaultSafetyDistanceMeters,
@@ -225,14 +237,19 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         };
     }, [scenario.sector.bounds]);
 
+    const conditions: EnvironmentalConditions = useMemo(() => ({
+        ...scenario.sector.conditions,
+        ...environmentOverrides,
+    }), [environmentOverrides, scenario.sector.conditions]);
+
     const computeReturnMinutes = useCallback((drone: DroneState) => {
         return computeReturnMinutesWithEnvironment(
             drone.position,
             drone.homePosition,
             drone.speedKts,
-            scenario.sector.conditions,
+            conditions,
         );
-    }, [scenario.sector.conditions]);
+    }, [conditions]);
 
     const computeEmergencyReserve = useCallback((drone: DroneState) => {
         const minutesToHub = computeReturnMinutes(drone);
@@ -460,24 +477,43 @@ export function MissionProvider({children}: { children: React.ReactNode }) {
         manualInterventionEnabled, setManualInterventionEnabled,
         fogOfWarEnabled, setFogOfWarEnabled,
         commsConfig, setCommsConfig,
+        environmentOverrides, setEnvironmentOverrides,
+        conditions,
         postMission, finalizeMission, setNasaTlxOptIn, submitNasaTlxResponses, clearPostMission,
         swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,
     }), [
-        phase, scenarioHook, drones, selectedDroneIds, droneSelection,
-        spawnPoints, hub, selectedSpawnPointId, selectedDroneModelId,
+        phase, setPhase,
+        scenarioHook,
+        drones, setDrones,
+        selectedDroneIds,
+        droneSelection,
+        spawnPoints, hub,
+        selectedSpawnPointId, setSelectedSpawnPointId,
+        selectedDroneModelId, setSelectedDroneModelId,
         handleSpawnDrone, applyPresetDroneSet,
-        sensorSettings, sensorsEnabled, showSensorRanges,
+        sensorSettings, setSensorSettings,
+        sensorsEnabled, setSensorsEnabled,
+        showSensorRanges, setShowSensorRanges,
         handleSensorSettingChange,
-        voronoiEnabled, voronoiCells, coveragePlans, coverageActive, coverageOverlap,
-        detectionLog, appendLog,
-        alerts, appendAlerts, acknowledgeAlert, acknowledgeAllAlerts,
-        alertAudioEnabled, unacknowledgedAlertCount,
-        manualInterventionEnabled, fogOfWarEnabled,
-        commsConfig,
+        voronoiEnabled, setVoronoiEnabled,
+        voronoiCells, setVoronoiCells,
+        coveragePlans, setCoveragePlans,
+        coverageActive, setCoverageActive,
+        coverageOverlap, setCoverageOverlap,
+        detectionLog, setDetectionLog, appendLog,
+        alerts, setAlerts, appendAlerts,
+        acknowledgeAlert, acknowledgeAllAlerts,
+        alertAudioEnabled, setAlertAudioEnabled,
+        unacknowledgedAlertCount,
+        manualInterventionEnabled, setManualInterventionEnabled,
+        fogOfWarEnabled, setFogOfWarEnabled,
+        commsConfig, setCommsConfig,
+        environmentOverrides, setEnvironmentOverrides,
+        conditions,
         postMission, finalizeMission, setNasaTlxOptIn, submitNasaTlxResponses, clearPostMission,
-        swarmEnabledGlobal,
+        swarmEnabledGlobal, swarmParamsRef, batteryWarningStateRef,
         clampToBounds, computeReturnMinutes, computeEmergencyReserve, detectionProbability,
         resetDrones,
     ]);
