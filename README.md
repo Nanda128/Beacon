@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/1126044307.svg)](https://doi.org/10.5281/zenodo.19325020)
+
 # BEACON - Behavioral Engine for Autonomous Coordination in Ocean Navigation
 
 > Final Year Project - B.Sc. Immersive Software Engineering, University of Limerick
