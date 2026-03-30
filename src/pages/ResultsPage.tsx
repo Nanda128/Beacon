@@ -150,7 +150,6 @@ export default function ResultsPage() {
                                 className="btn"
                                 onClick={() => {
                                     clearPostMission();
-                                    setPhase("landing");
                                     navigate("/");
                                 }}
                             >
