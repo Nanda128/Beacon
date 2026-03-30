@@ -6,7 +6,6 @@
 
 BEACON is a browser-based simulation of autonomous drone-swarm maritime search-and-rescue (SAR) operations. 
 It models a realistic multi-drone fleet operating over a procedurally generated ocean sector, complete with swarm coordination, sensor detection, communication degradation, and operator alerts, all running entirely client-side with no backend.
----
 
 ## Tech Stack
 
