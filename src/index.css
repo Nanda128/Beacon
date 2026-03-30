@@ -700,6 +700,15 @@ body {
     line-height: 1.5;
 }
 
+.overlay-box.overlay-box--voronoi-legend {
+    left: auto;
+    right: 12px;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    max-width: 260px;
+}
+
 .overlay-box .btn.ghost {
     background: var(--overlay-box-ghost-btn-bg);
     color: var(--overlay-box-ghost-btn-text);

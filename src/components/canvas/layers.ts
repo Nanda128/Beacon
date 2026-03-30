@@ -9,6 +9,7 @@ import {anomalyTypeLabels, anomalyStyles} from "../../config/anomalies";
 import {alertSeverityStyles} from "../../config/alerts";
 import {adjustedGrid, screenFromWorld, type CameraState, type Size} from "./utils";
 import {signalQualityColor, signalBars} from "../../domain/comms/channel";
+import {getDroneColorForLayer, coveragePathColor} from "../../config/visuals";
 
 export const createWaterPattern = (ctx: CanvasRenderingContext2D, scenario: MaritimeScenario) => {
     const tile = generateWaterTileData(scenario.sector.water, scenario.seed);
@@ -258,35 +259,25 @@ export const drawDroneHub = (ctx: CanvasRenderingContext2D, size: Size, camera: 
     ctx.restore();
 };
 
-const voronoiColors = [
-    "#38bdf8",
-    "#a78bfa",
-    "#f59e0b",
-    "#22c55e",
-    "#ef4444",
-    "#eab308",
-    "#14b8a6",
-    "#6366f1",
-];
-
 export const drawVoronoiCells = (
     ctx: CanvasRenderingContext2D,
     size: Size,
     camera: CameraState,
     cells: VoronoiCell[] | undefined,
-    selectedIds: string[]
+    selectedIds: string[],
+    orderedDroneIds: string[],
 ) => {
     if (!cells || cells.length === 0) return;
     ctx.save();
-    cells.forEach((cell, idx) => {
+    cells.forEach((cell) => {
         if (!cell.polygon || cell.polygon.length < 2) return;
         const poly = cell.polygon.map((p) => screenFromWorld(p, size, camera));
         if (poly.length < 2) return;
-        const color = voronoiColors[idx % voronoiColors.length];
+        const color = getDroneColorForLayer(cell.droneId, orderedDroneIds);
         const isSelected = selectedIds.includes(cell.droneId);
         ctx.beginPath();
         ctx.moveTo(poly[0].x, poly[0].y);
-        for (let i = 1; i < poly.length; i++) {
+        for (let i = 1; i < poly.length; i += 1) {
             ctx.lineTo(poly[i].x, poly[i].y);
         }
         ctx.closePath();
@@ -297,22 +288,8 @@ export const drawVoronoiCells = (
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-        const centroid = screenFromWorld(cell.centroid, size, camera);
-        ctx.fillStyle = color;
-        ctx.font = "11px 'Inter', system-ui, -apple-system, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(cell.droneId, centroid.x, centroid.y - 6);
     });
     ctx.restore();
-};
-
-const coverageColor = "rgba(59,130,246,0.9)";
-const dronePalette = ["#38bdf8", "#a78bfa", "#f59e0b", "#22c55e", "#ef4444", "#eab308", "#14b8a6", "#6366f1", "#8b5cf6", "#0ea5e9"];
-
-const colorForDrone = (id: string) => {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = (hash + id.charCodeAt(i) * (i + 1)) % 997;
-    return dronePalette[hash % dronePalette.length];
 };
 
 export const drawCoveragePaths = (
@@ -321,12 +298,14 @@ export const drawCoveragePaths = (
     camera: CameraState,
     plans: CoveragePlan[] | undefined,
     selectedIds: string[],
+    orderedDroneIds: string[],
 ) => {
     if (!plans || plans.length === 0) return;
     ctx.save();
     plans.forEach((plan) => {
         const isSelected = selectedIds.includes(plan.droneId);
-        ctx.strokeStyle = isSelected ? coverageColor : "rgba(148,163,184,0.75)";
+        const droneColor = getDroneColorForLayer(plan.droneId, orderedDroneIds);
+        ctx.strokeStyle = isSelected ? coveragePathColor : "rgba(148,163,184,0.75)";
         ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.setLineDash([10, 6]);
         plan.lanes.forEach((lane) => {
@@ -340,18 +319,13 @@ export const drawCoveragePaths = (
         ctx.setLineDash([]);
         plan.waypoints.forEach((wp, idx) => {
             const p = screenFromWorld(wp, size, camera);
-            ctx.fillStyle = idx % 2 === 0 ? "rgba(59,130,246,0.85)" : "rgba(59,130,246,0.55)";
+            ctx.fillStyle = idx % 2 === 0 ? `${droneColor}d9` : `${droneColor}88`;
             ctx.beginPath();
             ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
             ctx.fill();
         });
-        const centroid = plan.polygon.reduce((acc, p) => ({x: acc.x + p.x, y: acc.y + p.y}), {x: 0, y: 0});
-        const count = plan.polygon.length || 1;
-        const center = screenFromWorld({x: centroid.x / count, y: centroid.y / count}, size, camera);
-        ctx.fillStyle = isSelected ? coverageColor : "rgba(148,163,184,0.9)";
+        ctx.fillStyle = isSelected ? coveragePathColor : "rgba(148,163,184,0.9)";
         ctx.font = "11px 'Inter', system-ui, -apple-system, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(`${plan.droneId} · ${plan.completenessPct}%`, center.x, center.y);
     });
     ctx.restore();
 };
@@ -579,10 +553,11 @@ export const drawDrones = (
     camera: CameraState,
     drones: DroneState[],
     selectedIds: string[],
-    options?: { showSensorRange?: boolean; sensorRangeMeters?: number }
+    options?: { showSensorRange?: boolean; sensorRangeMeters?: number },
 ) => {
+    const orderedDroneIds = drones.map((d) => d.id);
     drones.forEach((drone) => {
-        const droneColor = colorForDrone(drone.id);
+        const droneColor = getDroneColorForLayer(drone.id, orderedDroneIds);
         const screenPos = screenFromWorld(drone.position, size, camera);
         const isSelected = selectedIds.includes(drone.id);
         if (options?.showSensorRange && options.sensorRangeMeters && options.sensorRangeMeters > 0) {

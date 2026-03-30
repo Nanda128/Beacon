@@ -1,12 +1,11 @@
-import React, {useCallback, useEffect, useRef, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState, useMemo} from "react";
 import type {EnvironmentalConditions, MaritimeScenario, Vec2} from "../domain/types/environment";
-import type {AnomalyType} from "../domain/types/environment";
 import type {DroneState} from "../domain/types/drone";
 import type {Alert} from "../domain/types/alert";
 import type {CoverageHeatmapGrid, MissionMetricsSummary} from "../domain/types/metrics";
 import type {VoronoiCell} from "./canvas/voronoi";
 import type {CoveragePlan} from "../domain/coverage/planner";
-import {anomalyTypeLabels} from "../config/anomalies";
+import {getDroneColorForLayer} from "../config/visuals";
 import {
     adjustedGrid,
     clamp,
@@ -37,7 +36,6 @@ import {
     drawCoveragePaths,
     drawScanValidation,
 } from "./canvas/layers";
-import {anomalyStyles} from "../config/anomalies";
 
 export type MaritimeCanvas2DProps = {
     gridSpacing?: number;
@@ -87,9 +85,9 @@ export default function MaritimeCanvas2D({
                                              scanValidationActive,
                                              alerts = [],
                                              coverageHeatmap,
-                                             metricsSummary,
                                              conditionsOverride,
                                          }: MaritimeCanvas2DProps) {
+    const [hoveredVoronoiDroneId, setHoveredVoronoiDroneId] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const [size, setSize] = useState<Size>({width: 0, height: 0});
@@ -106,7 +104,17 @@ export default function MaritimeCanvas2D({
     const [selectionBox, setSelectionBox] = useState<{ start: Vec2; end: Vec2 } | null>(null);
     const waterPatternRef = useRef<CanvasPattern | null>(null);
 
-
+    const orderedDroneIds = useMemo(() => drones.map((d) => d.id), [drones]);
+    useMemo(() => {
+        if (!voronoiCells || voronoiCells.length === 0) return new Map<string, number>();
+        const map = new Map<string, number>();
+        voronoiCells.forEach((cell, idx) => {
+            if (!map.has(cell.droneId)) {
+                map.set(cell.droneId, idx);
+            }
+        });
+        return map;
+    }, [voronoiCells]);
     const computeScale = useCallback(() => computeMinScale(size, scenario.sector.bounds), [size, scenario.sector.bounds]);
 
     const setCameraState = useCallback((next: CameraState) => {
@@ -314,8 +322,15 @@ export default function MaritimeCanvas2D({
             drawAxes(ctx, size, cameraRef.current);
             drawCoverageHeatmap(ctx, size, cameraRef.current, scenario.sector.bounds, coverageHeatmap);
             drawSectorBounds(ctx, size, cameraRef.current, scenario);
-            drawVoronoiCells(ctx, size, cameraRef.current, voronoiCells, selectedDroneIds);
-            drawCoveragePaths(ctx, size, cameraRef.current, coveragePlans, selectedDroneIds);
+            drawVoronoiCells(
+                ctx,
+                size,
+                cameraRef.current,
+                voronoiCells,
+                hoveredVoronoiDroneId ? [hoveredVoronoiDroneId] : selectedDroneIds,
+                orderedDroneIds,
+            );
+            drawCoveragePaths(ctx, size, cameraRef.current, coveragePlans, selectedDroneIds, orderedDroneIds);
             drawDroneHub(ctx, size, cameraRef.current, scenario);
             drawAnomalies(ctx, size, cameraRef.current, scenario, fogOfWarEnabled);
             if (scanValidationActive) {
@@ -332,7 +347,7 @@ export default function MaritimeCanvas2D({
         };
         raf = requestAnimationFrame(render);
         return () => cancelAnimationFrame(raf);
-    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts, coverageHeatmap, conditionsOverride]);
+    }, [size.width, size.height, gridSpacing, drones, scenario, selectedDroneIds, selectionBox, showSensorRange, sensorRangeMeters, voronoiCells, coveragePlans, fogOfWarEnabled, scanValidationActive, alerts, coverageHeatmap, conditionsOverride, hoveredVoronoiDroneId, orderedDroneIds]);
 
     useEffect(() => {
         const handleGlobalPointerDown = (event: PointerEvent) => {
@@ -419,47 +434,53 @@ export default function MaritimeCanvas2D({
                                 <strong>Coverage</strong> avg {Math.round(coveragePlans.reduce((sum, p) => sum + p.completenessPct, 0) / coveragePlans.length)}%
                             </div>
                         )}
-                        {metricsSummary && (
-                            <>
-                                <div>
-                                    <strong>Detection rate</strong> {Math.round(metricsSummary.anomaliesDetectedPct)}%
-                                    · {metricsSummary.anomaliesDetected}/{metricsSummary.totalRealAnomalies}
-                                </div>
-                                <div>
-                                    <strong>Alerts/min</strong> {metricsSummary.alertBurdenPerMin.toFixed(1)}
-                                    · peak {metricsSummary.peakUnacknowledgedAlerts} unacked
-                                </div>
-                            </>
-                        )}
-                        <div style={{display: "grid", gap: 2, marginTop: 4}}>
-                            {Object.entries(anomalyStyles).map(([type, style]) => {
-                                const typed = type as AnomalyType;
-                                const detected = scenario.anomalies.items.filter((a) => a.type === typed && a.detected).length;
-                                const total = scenario.anomalies.items.filter((a) => a.type === typed).length;
-                                return (
-                                    <div key={type}
-                                         style={{display: "flex", alignItems: "center", gap: 6, fontSize: 12}}>
-                                        <span style={{
-                                            width: 10,
-                                            height: 10,
-                                            borderRadius: 2,
-                                            background: style.color,
-                                            display: "inline-block"
-                                        }}/>
-                                        <span>{anomalyTypeLabels[typed]}: {detected}/{total}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div style={{marginTop: 4, opacity: 0.7}}>Drag empty water to box-select (Shift add, Ctrl/Cmd
-                            toggle)
-                            · Drag drones to reposition · Shift/Ctrl/Cmd click
-                            to
-                            queue waypoint · Click marker to
-                            toggle
-                            detected
-                        </div>
                     </div>
+                    {voronoiCells && voronoiCells.length > 0 && (
+                        <div
+                            className="overlay-box overlay-box--voronoi-legend"
+                            style={{
+                                pointerEvents: "auto",
+                            }}
+                        >
+                            <div style={{marginBottom: 6, fontWeight: 600}}>Voronoi cells</div>
+                            <ul style={{listStyle: "none", margin: 0, padding: 0, fontSize: 12}}>
+                                {voronoiCells.map((cell) => {
+                                    const drone = drones.find((d) => d.id === cell.droneId);
+                                    const label = drone?.callsign ?? cell.droneId;
+                                    const isHovered = hoveredVoronoiDroneId === cell.droneId;
+                                    const swatchColor = getDroneColorForLayer(cell.droneId, orderedDroneIds);
+                                    return (
+                                        <li
+                                            key={cell.droneId}
+                                            onMouseEnter={() => setHoveredVoronoiDroneId(cell.droneId)}
+                                            onMouseLeave={() => setHoveredVoronoiDroneId(null)}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 6,
+                                                padding: "2px 4px",
+                                                borderRadius: 4,
+                                                cursor: "default",
+                                                backgroundColor: isHovered ? "rgba(56,189,248,0.12)" : "transparent",
+                                            }}
+                                        >
+                                            <span
+                                                aria-hidden="true"
+                                                style={{
+                                                    width: 10,
+                                                    height: 10,
+                                                    borderRadius: 999,
+                                                    backgroundColor: swatchColor,
+                                                    flexShrink: 0,
+                                                }}
+                                            />
+                                            <span>{label}</span>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             </div>
         </>
