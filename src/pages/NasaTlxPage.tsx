@@ -15,7 +15,7 @@ import type {NasaTlxPairwiseSelection, NasaTlxResponses} from "../domain/types/t
 
 export default function NasaTlxPage() {
     const navigate = useNavigate();
-    const {postMission, submitNasaTlxResponses, setNasaTlxOptIn, setPhase} = useMission();
+    const {postMission, submitNasaTlxResponses, setPhase} = useMission();
 
     const [responses, setResponses] = useState<NasaTlxResponses>(() =>
         normalizeNasaTlxResponses(postMission.nasaTlxAssessment?.responses ?? createDefaultNasaTlxResponses()),
@@ -147,16 +147,6 @@ export default function NasaTlxPage() {
                                 }}
                             >
                                 Submit questionnaire
-                            </button>
-                            <button
-                                className="btn ghost"
-                                onClick={() => {
-                                    setNasaTlxOptIn(false);
-                                    setPhase("debrief");
-                                    navigate("/results");
-                                }}
-                            >
-                                Skip questionnaire
                             </button>
                         </div>
                         {!pairwiseComplete && (

@@ -16,7 +16,7 @@ const formatPerMinute = (value: number) => `${value.toFixed(1)}/min`;
 
 export default function EndMissionPage() {
     const navigate = useNavigate();
-    const {postMission, setNasaTlxOptIn, setPhase} = useMission();
+    const {postMission, setPhase} = useMission();
 
     if (!postMission.metricsSnapshot) {
         return <Navigate to="/setup" replace/>;
@@ -72,22 +72,11 @@ export default function EndMissionPage() {
                             <button
                                 className="btn"
                                 onClick={() => {
-                                    setNasaTlxOptIn(true);
                                     setPhase("debrief");
                                     navigate("/nasa-tlx");
                                 }}
                             >
                                 Complete NASA-TLX
-                            </button>
-                            <button
-                                className="btn ghost"
-                                onClick={() => {
-                                    setNasaTlxOptIn(false);
-                                    setPhase("debrief");
-                                    navigate("/results");
-                                }}
-                            >
-                                Skip for now
                             </button>
                         </div>
                     </section>
